@@ -20,7 +20,7 @@ shooting$eff_pt = shooting$eff_pt/1000
 # 1. Create a true Within-Subject Centered Baseline (The Fix)
 shooting <- shooting %>%
   group_by(SID) %>%
-  mutate(pupil_size_phasic_center = pupil_size_phasic_mean_norm - mean(pupil_size_phasic_mean_norm, na.rm = TRUE)) %>%
+  mutate(pupil_size_phasic_center = pupil_size_mean - mean(pupil_size_mean, na.rm = TRUE)) %>%
   ungroup()
 
 # 1. Define a wrapper function that forces sigma to be positive
@@ -69,7 +69,7 @@ nlme_tvns_pupil_continuous <- nlme(
     0.254   
   )),
   
-  control = nlmeControl(opt = "nlm", pnlsMaxIter = 100, msMaxIter = 100)
+  control = nlmeControl(opt = "nlm", pnlsMaxIter = 300, msMaxIter = 300)
 )
 
 summary(nlme_tvns_pupil_continuous)

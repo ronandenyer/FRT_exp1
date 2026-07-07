@@ -22,7 +22,7 @@ shooting.nlme <- nlme(
   # Add gamma to the fixed effects list
   # We'll start by assuming gamma is the same for both reward types (gamma ~ 1)
   # because estimating two asymptotes can make the model very unstable.
-  fixed = list(mu ~ stim_type*, 
+  fixed = list(mu ~ stim_type, 
                sigma ~ 1, 
                asym ~ stim_type, 
                gamma ~ 1), 

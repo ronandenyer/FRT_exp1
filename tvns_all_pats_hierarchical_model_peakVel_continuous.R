@@ -43,7 +43,34 @@ shooting <- shooting %>%
 
 # 1. Scale the centered predictor to fix the optimizer matrix
 shooting$pupil_baseline_scaled <- shooting$pupil_size_center / sd(shooting$pupil_size_center, na.rm = TRUE)
+# ==============================================================================
+# REPLACING SECTION 2: Within-Subject Z-Scoring & High-Leverage Trimming
+# ==============================================================================
 
+# 1. Calculate pure Within-Subject Z-scores for Vigor
+shooting <- shooting %>%
+  group_by(SID) %>%
+  mutate(
+    vigor_wc = peak_tanVel - mean(peak_tanVel, na.rm = TRUE),
+    # FIX 1: Scale by individual SD instead of group SD to equalize participant leverage
+    vigor_scaled = vigor_wc / sd(vigor_wc, na.rm = TRUE) 
+  ) %>%
+  ungroup()
+
+# 2. FIX 2: Filter out extreme high-leverage outliers (beyond 3.5 SD)
+# This removes the absolute motor glitches while keeping ~99% of your robust data
+shooting <- shooting[abs(shooting$vigor_scaled) <= 3.5, ]
+
+# 3. Repeat the Within-Subject Z-scoring for Pupil Baseline
+shooting <- shooting %>%
+  group_by(SID) %>%
+  mutate(
+    pupil_size_center = pupil_size_mean - mean(pupil_size_mean, na.rm = TRUE),
+    pupil_baseline_scaled = pupil_size_center / sd(pupil_size_center, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# ==============================================================================
 
 # --- Quick Collinearity Check ---
 # Does tVNS fundamentally change Reach Vigor like Reward did?
@@ -81,7 +108,7 @@ nlme_tvns_vigor_continuous <- nlme(
     gamma ~ 1
   ), 
   
-  random = mu ~ 1 | SID,
+  random = mu + sigma ~ 1 | SID,
   data = shooting,
   
   start = list(fixed = c(
@@ -99,6 +126,17 @@ nlme_tvns_vigor_continuous <- nlme(
 
 summary(nlme_tvns_vigor_continuous)
 
+# 1. Look at the absolute extremes of your predictor
+print(summary(shooting$vigor_scaled))
+
+# 2. Count how many trials sit beyond standard boundaries
+total_trials <- nrow(shooting)
+outliers_3sd <- sum(abs(shooting$vigor_scaled) > 3, na.rm = TRUE)
+outliers_4sd <- sum(abs(shooting$vigor_scaled) > 4, na.rm = TRUE)
+
+cat(sprintf("\nOutliers beyond 3 SD: %d (%.2f%% of data)\n", outliers_3sd, (outliers_3sd/total_trials)*100))
+cat(sprintf("Outliers beyond 4 SD: %d (%.2f%% of data)\n", outliers_4sd, (outliers_4sd/total_trials)*100))
+
 # Test the masked interaction: Does baseline arousal dictate the tVNS effect on movement vigor?
 cat("\n--- Masked Interaction Check: tVNS * Pupil on Vigor ---\n")
 lmer_vigor_state <- lmer(
@@ -110,41 +148,61 @@ print(summary(lmer_vigor_state))
 cat("---------------------------------------------------\n\n")
 
 library(ggplot2)
+library(ggplot2)
 
-# 1. Extract fixed effects from the tVNS Vigor model
-coefs_tvns <- fixef(nlme_tvns_vigor_continuous)
+# 1. Extract fixed effects and Variance-Covariance Matrix
+beta_all <- fixef(nlme_tvns_vigor_continuous)
+vc_all   <- vcov(nlme_tvns_vigor_continuous)
 
-# 2. Define the equations
-# Sham (Reference)
-intercept_sham <- coefs_tvns["mu.(Intercept)"]
-slope_sham     <- coefs_tvns["mu.vigor_scaled"]
+# 2. Subset to only the 'mu' parameters (The first 4 coefficients)
+# 1: Intercept, 2: stim_type2, 3: vigor_scaled, 4: interaction
+beta <- beta_all[1:4]
+vc   <- vc_all[1:4, 1:4]
 
-# tVNS (Type 2)
-# Note: Double check names(coefs_tvns) if you get an error here
-intercept_tvns <- coefs_tvns["mu.(Intercept)"] + coefs_tvns["mu.stim_type2"]
-slope_tvns     <- coefs_tvns["mu.vigor_scaled"] + coefs_tvns["mu.stim_type2:vigor_scaled"]
-
-# 3. Create a clean sequence for scaled vigor (-3 SD to +3 SD)
+# 3. Create Design Matrices
 vigor_range <- seq(-3, 3, length.out = 100)
+grid_sham <- data.frame(
+  stim_type = factor(rep("1", 100), levels = c("1", "2")), # "1" is Sham
+  vigor_scaled = vigor_range
+)
+grid_tvns <- data.frame(
+  stim_type = factor(rep("2", 100), levels = c("1", "2")), # "2" is tVNS
+  vigor_scaled = vigor_range
+)
 
-# 4. Calculate predicted mu values
+# Use model.matrix to generate the X matrices
+X_sham <- model.matrix(~ stim_type * vigor_scaled, data = grid_sham)
+X_tvns <- model.matrix(~ stim_type * vigor_scaled, data = grid_tvns)
+
+# 4. Calculate Predicted Mu and Standard Error
+calc_mu_ci <- function(X, beta, vc) {
+  mu_pred <- X %*% beta
+  se_pred <- sqrt(diag(X %*% vc %*% t(X)))
+  return(data.frame(mu = mu_pred, se = se_pred))
+}
+
+sham_data <- calc_mu_ci(X_sham, beta, vc)
+tvns_data <- calc_mu_ci(X_tvns, beta, vc)
+
+# 5. Assemble and Plot
 df_plot_tvns <- data.frame(
   vigor_scaled = rep(vigor_range, 2),
   Condition = rep(c("Sham", "tVNS"), each = 100),
-  predicted_mu = c(
-    intercept_sham + slope_sham * vigor_range,
-    intercept_tvns + slope_tvns * vigor_range
-  )
+  predicted_mu = c(sham_data$mu, tvns_data$mu),
+  se = c(sham_data$se, tvns_data$se)
 )
 
-# 5. Plot it
-ggplot(df_plot_tvns, aes(x = vigor_scaled, y = predicted_mu, color = Condition)) +
+df_plot_tvns$upper <- df_plot_tvns$predicted_mu + (1.96 * df_plot_tvns$se)
+df_plot_tvns$lower <- df_plot_tvns$predicted_mu - (1.96 * df_plot_tvns$se)
+
+ggplot(df_plot_tvns, aes(x = vigor_scaled, y = predicted_mu, color = Condition, fill = Condition)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.15, color = NA) +
   geom_line(linewidth = 1.5) +
-  # Using Blue for tVNS to visually distinguish it from the Orange Reward plots
   scale_color_manual(values = c("Sham" = "#4A5568", "tVNS" = "#3182CE")) + 
+  scale_fill_manual(values = c("Sham" = "#4A5568", "tVNS" = "#3182CE")) +
   labs(
     title = "tVNS Bypasses Cognitive-Motor Execution Coupling",
-    subtitle = "Efficiency scales strongly with vigor, unaffected by noradrenergic stimulation",
+    subtitle = "Efficiency scales with vigor, unaffected by tVNS (95% CI)",
     x = "Peak Reach Velocity (Within-Subject Scaled)",
     y = expression("Predicted Processing Efficiency (" * mu * ")")
   ) +

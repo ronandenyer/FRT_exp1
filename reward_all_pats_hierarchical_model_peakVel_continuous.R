@@ -87,47 +87,62 @@ nlme_reward_vigor_continuous <- nlme(
 summary(nlme_reward_vigor_continuous)
 
 library(ggplot2)
+library(ggplot2)
+# 1. Extract fixed effects and Variance-Covariance Matrix
+beta_all <- fixef(nlme_reward_vigor_continuous)
+vc_all   <- vcov(nlme_reward_vigor_continuous)
 
-# 1. Extract fixed effects from the REWARD Vigor model
-coefs_reward <- fixef(nlme_reward_vigor_continuous)
+# 2. Subset to only the 'mu' parameters (The first 4 coefficients)
+# mu.(Intercept), mu.reward_type2, mu.vigor_scaled, mu.reward_type2:vigor_scaled
+beta <- beta_all[1:4]
+vc   <- vc_all[1:4, 1:4]
 
-# 2. Define the equations
-# No Reward (Reference)
-intercept_no_reward <- coefs_reward["mu.(Intercept)"]
-slope_no_reward     <- coefs_reward["mu.vigor_scaled"]
+# 3. Create Design Matrices
+grid_nr <- data.frame(
+  reward_type = factor(rep("1", 100), levels = c("1", "2")),
+  vigor_scaled = vigor_range
+)
+grid_r  <- data.frame(
+  reward_type = factor(rep("2", 100), levels = c("1", "2")),
+  vigor_scaled = vigor_range
+)
 
-# Reward (Type 2)
-# Note: Check names(coefs_reward) if you get a subscript out of bounds error
-intercept_reward <- coefs_reward["mu.(Intercept)"] + coefs_reward["mu.reward_type2"]
-slope_reward     <- coefs_reward["mu.vigor_scaled"] + coefs_reward["mu.reward_type2:vigor_scaled"]
+# Use model.matrix, but manually specify the formula for the mu equation
+# This matches the subsetted beta/vc
+X_no_reward <- model.matrix(~ reward_type * vigor_scaled, data = grid_nr)
+X_reward    <- model.matrix(~ reward_type * vigor_scaled, data = grid_r)
 
-# 3. Create a clean sequence for scaled vigor (-3 SD to +3 SD)
-vigor_range <- seq(-3, 3, length.out = 100)
+# 4. Calculate Predicted Mu and SE
+# (The function remains the same)
+calc_mu_ci <- function(X, beta, vc) {
+  mu_pred <- X %*% beta
+  se_pred <- sqrt(diag(X %*% vc %*% t(X)))
+  return(data.frame(mu = mu_pred, se = se_pred))
+}
 
-# 4. Calculate predicted mu values
+nr_data <- calc_mu_ci(X_no_reward, beta, vc)
+r_data  <- calc_mu_ci(X_reward, beta, vc)
+
+# 5. Assemble and Plot
 df_plot_reward <- data.frame(
   vigor_scaled = rep(vigor_range, 2),
   Condition = rep(c("No Reward", "Reward"), each = 100),
-  predicted_mu = c(
-    intercept_no_reward + slope_no_reward * vigor_range,
-    intercept_reward + slope_reward * vigor_range
-  )
+  predicted_mu = c(nr_data$mu, r_data$mu),
+  se = c(nr_data$se, r_data$se)
 )
 
-# 5. Plot it
-ggplot(df_plot_reward, aes(x = vigor_scaled, y = predicted_mu, color = Condition)) +
+df_plot_reward$upper <- df_plot_reward$predicted_mu + (1.96 * df_plot_reward$se)
+df_plot_reward$lower <- df_plot_reward$predicted_mu - (1.96 * df_plot_reward$se)
+
+ggplot(df_plot_reward, aes(x = vigor_scaled, y = predicted_mu, color = Condition, fill = Condition)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.15, color = NA) +
   geom_line(linewidth = 1.5) +
-  # Using Orange to distinguish Reward from the tVNS plot
   scale_color_manual(values = c("No Reward" = "#4A5568", "Reward" = "#DD6B20")) + 
+  scale_fill_manual(values = c("No Reward" = "#4A5568", "Reward" = "#DD6B20")) +
   labs(
     title = "Reward Shifts Cognitive-Motor Coupling",
-    subtitle = "Endogenous reward provides a constant efficiency boost across all vigor states",
+    subtitle = "Endogenous reward provides a constant efficiency boost (95% CI)",
     x = "Peak Reach Velocity (Within-Subject Scaled)",
     y = expression("Predicted Processing Efficiency (" * mu * ")")
   ) +
-  theme_minimal(base_size = 14) +
-  theme(
-    legend.position = "bottom",
-    panel.grid.minor = element_blank(),
-    plot.title = element_text(face = "bold")
-  )
+  theme_minimal(base_size = 14)

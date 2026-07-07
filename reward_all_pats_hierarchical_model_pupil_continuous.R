@@ -20,6 +20,8 @@ shooting$eff_pt <- shooting$eff_pt / 1000
 # 2. Normalize and Scale Pupil Data (CRITICAL for model stability)
 # Convert to same units as your tVNS experiment
 shooting$pupil_size_mean <- shooting$pupil_size_mean * 1e6
+shooting$pupil_size_phasic_mean_norm <- shooting$pupil_size_phasic_mean_norm * 1e6
+
 
 # Within-Subject Centering
 shooting <- shooting %>%
@@ -32,7 +34,7 @@ shooting <- shooting %>%
 shooting = shooting[shooting$eff_pt > 0,]
 
 # Scale the centered predictor (avoids the chol.default error)
-shooting$pupil_baseline_scaled <- shooting$pupil_baseline_wc / sd(shooting$pupil_baseline_wc, na.rm = TRUE)
+shooting$pupil_baseline_scaled <- shooting$pupil_baseline_wc# / sd(shooting$pupil_baseline_wc, na.rm = TRUE)
 
 # 3. Define the Safe Pnorm Wrapper
 safe_pnorm <- function(x, mu, sigma) {
@@ -65,7 +67,7 @@ nlme_reward_pupil_continuous <- nlme(
     gamma ~ 1
   ), 
   
-  random = mu ~ reward_type | SID,
+  random = mu ~1 | SID,
   data = shooting,
   
   start = list(fixed = c(
