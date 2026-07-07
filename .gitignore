@@ -1,0 +1,21 @@
+# --- MATLAB ---
+*.mat
+*.fig
+*.asv
+*.mexw64
+*.mexw32
+*.mexmaci64
+
+# --- R ---
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+.Rhistory
+.RDataTmp
+
+# --- System/OS ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
