@@ -8,7 +8,7 @@ participants = {'FRTP01', 'FRTP02', 'FRTP03', 'FRTP04', 'FRTP05', 'FRTP06', ...
                 'FRTP29', 'FRTP30', 'FRTP31', 'FRTP32', 'FRTP33'};
 
 base_dir = 'C:\Users\denyer\OneDrive - UCL\FRT_data\tVNS_experiment'; 
-kinarm_delay = 0.02; % Consistent with your fitting script[cite: 1]
+kinarm_delay = 0.0; % Consistent with your fitting script[cite: 1]
 
 %% --- STEP 1: COMPUTE SUBJECT-LEVEL COVARIATES ---
 fprintf('Pre-computing SAT model fits for covariates...\n');
@@ -97,7 +97,7 @@ for i = 1:length(participants)
     % Select target columns (Your original hardcoded list)[cite: 2]
     target_cols = {'SID', 'block_num', 'trial_num', 'eff_pt', 'success', 'rt', ...
                    'motion_angle_rot', 'pupil_size_mean', 'pupil_size_phasic_mean', ...
-                   'pupil_size_phasic_mean_norm', 'pupil_size_phasic_slope', 'peak_tanVel', ...
+                   'pupil_size_phasic_mean_norm', 'pupil_size_phasic_slope', 'pupil_size_max', 'peak_tanVel', ...
                    'stim_type', 'prev_trial_success', 'end_target'};
     data = data(:, target_cols); %[cite: 2]
     % Inject Subject-Level Covariates and Group Splits

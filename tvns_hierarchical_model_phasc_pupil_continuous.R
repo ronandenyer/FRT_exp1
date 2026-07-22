@@ -75,7 +75,7 @@ nlme_tvns_pupil_continuous <- nlme(
 summary(nlme_tvns_pupil_continuous)
 anova(nlme_tvns_pupil_continuous, type = "marginal")
 
-
+anova(shooting.nlme, nlme_tvns_pupil_continuous)
 library(nlme)
 
 # 1. Define the subjects and storage

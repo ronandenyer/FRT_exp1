@@ -11,7 +11,15 @@ shooting$stim_type = relevel(shooting$stim_type, ref = 1)
 shooting = shooting[!is.na(shooting$eff_pt),]
 shooting = shooting[!is.na(shooting$success),]
 
+shooting = shooting[!is.nan(shooting$pupil_size_phasic_mean),]
+shooting$pupil_size_phasic_mean_norm = shooting$pupil_size_phasic_mean_norm * 1e4
+shooting$pupil_size_phasic_mean = shooting$pupil_size_phasic_mean * 1e4
+shooting$pupil_size_phasic_slope = shooting$pupil_size_phasic_slope * 1e4
+shooting$pupil_size_mean = shooting$pupil_size_mean * 1e4
+
 shooting$eff_pt = shooting$eff_pt/1000
+
+
 
 #shooting = shooting[shooting$SID != "FRTP22",]
 
@@ -27,13 +35,13 @@ shooting.nlme <- nlme(
                asym ~ stim_type, 
                gamma ~ 1), 
   
-  random = mu ~ stim_type | SID,
+  random = mu ~ 1 | SID,
   data = shooting,
   
   # Update start values: you now need 7 values 
   # (2 for mu, 2 for sigma, 2 for asym, and 1 for gamma)
   start = list(fixed = c(0.2, -0.01,  # mu (Intercept, diff)
-                         0.02, # sigma (Intercept, diff)
+                         0.02, 0, # sigma (Intercept, diff)
                          0.95, 0.01,  # asym (Intercept, diff)
                          0.25))       # gamma (the guess rate)
 )
@@ -42,39 +50,32 @@ summary(shooting.nlme)
 # output statistical value for test effects
 anova(shooting.nlme)
 # ways to output model coefficients
-shooting.nlme$coefficients
-# This gives you just the random deviations (same as your manual indexing)
-random_effects <- ranef(shooting.nlme)
 
-
-
-shooting.nlmecomplex <- nlme(
+shooting.no_asym_int_nlme <- nlme(
+  # Replace 1/4 with gamma
   success ~ (gamma + (asym - gamma) * pnorm(eff_pt, mu, sigma)),
   
-  # Total parameters: 2 (mu) + 2 (sigma) + 1 (asym) + 1 (gamma) = 6
+  # Add gamma to the fixed effects list
+  # We'll start by assuming gamma is the same for both reward types (gamma ~ 1)
+  # because estimating two asymptotes can make the model very unstable.
   fixed = list(mu ~ stim_type, 
-               sigma ~ stim_type, 
-               asym ~ stim_type, 
-               gamma ~ 1),
+               sigma ~ 1, 
+               asym ~ 1, 
+               gamma ~ 1), 
   
-  random = mu ~ stim_type | SID,
+  random = mu ~ 1 | SID,
   data = shooting,
   
-  # Start list must have exactly 6 values
-  start = list(fixed = c(0.2, 0.0,   # mu: Intercept, stim_type effect
-                         0.02, 0.0,  # sigma: Intercept, stim_type effect
-                         0.95, 0,       # asym: Intercept only
-                         0.25)),      # gamma: Intercept only
-  control = nlmeControl(msMaxIter = 400, 
-                        pnlsMaxIter = 200, 
-                        msVerbose = TRUE) # msVerbose lets you see it "working"
+  # Update start values: you now need 7 values 
+  # (2 for mu, 2 for sigma, 2 for asym, and 1 for gamma)
+  start = list(fixed = c(0.2, -0.01,  # mu (Intercept, diff)
+                         0.02, # sigma (Intercept, diff)
+                         0.95,  # asym (Intercept, diff)
+                         0.25))       # gamma (the guess rate)
 )
-# output statistical value for test effects
-summary(shooting.nlmecomplex)
 
-anova(shooting.nlmecomplex)
+summary(shooting.no_asym_int_nlme)
 # ways to output model coefficients
-shooting.nlmecomplex$coefficients
 # Visualize data
 
 # oldham test to check validity of correlation

@@ -17,32 +17,53 @@ shooting <- shooting[!is.na(shooting$eff_pt), ]
 shooting <- shooting[!is.na(shooting$success), ]
 shooting <- shooting[!is.na(shooting$pupil_size_mean), ]
 shooting$eff_pt <- shooting$eff_pt / 1000
-# 2. Normalize and Scale Pupil Data (CRITICAL for model stability)
-# Convert to same units as your tVNS experiment
-shooting$pupil_size_mean <- shooting$pupil_size_mean * 1e6
-shooting$pupil_size_phasic_mean_norm <- shooting$pupil_size_phasic_mean_norm * 1e6
+
+# 4. Standardize units 
+shooting$pupil_size_phasic_mean_norm <- shooting$pupil_size_phasic_mean_norm * 1e4
+shooting$pupil_size_phasic_mean <- shooting$pupil_size_phasic_mean * 1e4
+shooting$pupil_size_phasic_slope <- shooting$pupil_size_phasic_slope * 1e4
+shooting$pupil_size_mean <- shooting$pupil_size_mean * 1e4
+shooting$eff_pt <- shooting$eff_pt / 1000 # Convert to seconds
+
+# 5. Extract State (Within-Subject) and Trait (Between-Subject) pupil variables
+shooting <- shooting %>%
+  group_by(SID) %>%
+  mutate(
+    # State: Trial-by-trial fluctuation (Mean is exactly 0 for everyone)
+    pupil_state = pupil_size_mean - mean(pupil_size_mean, na.rm = TRUE),
+    #pupil_slope = pupil_size_phasic_slope - mean(pupil_size_phasic_slope, na.rm = TRUE),
+    # Trait: The person's overall average baseline arousal
+    pupil_trait = mean(pupil_size_mean, na.rm = TRUE)
+  ) %>%
+  ungroup()
 
 
+# 2. Normalize and Scale Vigor Data (Peak Tangential Velocity)
 # Within-Subject Centering
 shooting <- shooting %>%
   group_by(SID) %>%
   mutate(
-    pupil_baseline_wc = pupil_size_mean - mean(pupil_size_mean, na.rm = TRUE)
+    vigor_wc = peak_tanVel - mean(peak_tanVel, na.rm = TRUE)
   ) %>%
   ungroup()
 
-shooting = shooting[shooting$eff_pt > 0,]
 
-# Scale the centered predictor (avoids the chol.default error)
-shooting$pupil_baseline_scaled <- shooting$pupil_baseline_wc# / sd(shooting$pupil_baseline_wc, na.rm = TRUE)
+# 1. Scale the variance of your already-centered variables
+shooting <- shooting %>%
+  mutate(
+    # Because mean is already 0, dividing by SD creates a true Z-score
+    pupil_state_scaled = pupil_state / sd(pupil_state, na.rm = TRUE),
+    vigor_scaled = vigor_wc / sd(vigor_wc, na.rm = TRUE)
+  )
 
-# 3. Define the Safe Pnorm Wrapper
-safe_pnorm <- function(x, mu, sigma) {
-  safe_sigma <- pmax(sigma, 1e-4) 
-  pnorm(x, mean = mu, sd = safe_sigma)
-}
+# 2. Trim the extreme physiological/kinematic artifacts
+shooting_trimmed <- shooting %>%
+  filter(
+    abs(pupil_state_scaled) <= 3,
+    #abs(pupil_slope_scaled) <= 3,
+    abs(vigor_scaled) <= 3
+  )
 
-library(nlme)
 
 # 1. First, find empirical starting values using a standard NLS
 # This ignores random effects for a second to find the 'neighborhood'
@@ -54,43 +75,45 @@ nls_fit <- nls(
 
 # Extract these optimized values
 nls_coefs <- coef(nls_fit)
+# 1. Ensure you still have the log-transformed function loaded in your environment
+safe_pnorm_log <- function(eff_pt, mu, log_sigma) {
+  pnorm(eff_pt, mean = mu, sd = exp(log_sigma)) 
+}
 
-# 2. Now, pass these into your nlme model
-# We set slopes to 0, but use the empirical intercepts from the NLS fit
+# 2. Run the model with log_sigma
 nlme_reward_pupil_continuous <- nlme(
-  success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
+  # CHANGE 1: Use safe_pnorm_log and log_sigma
+  success ~ (gamma + (asym - gamma) * safe_pnorm_log(eff_pt, mu, log_sigma)), 
   
   fixed = list(
-    mu ~ reward_type * pupil_baseline_scaled, 
-    sigma ~ 1, 
+    mu ~ reward_type * pupil_state_scaled, 
+    log_sigma ~ 1,  # CHANGE 2: Estimate log_sigma
     asym ~ 1, 
     gamma ~ 1
   ), 
   
-  random = mu ~1 | SID,
-  data = shooting,
+  random = list(SID = pdDiag(mu + log_sigma ~ 1)), # CHANGE 3: Random log_sigma
+  
+  data = shooting_trimmed,
   
   start = list(fixed = c(
-    nls_coefs["mu"],    # Intercept
-    0,                  # Main effect Reward
-    0,                  # Main effect Pupil
-    0,                  # Interaction
-    nls_coefs["sigma"], 
+    nls_coefs["mu"],        # Intercept
+    -0.01,                  # Main effect Reward
+    0,                      # Main effect Pupil
+    0,                      # Interaction
+    log(nls_coefs["sigma"]), # CHANGE 4: CRITICAL! You must log() the raw NLS guess
     nls_coefs["asym"],  
     nls_coefs["gamma"]
   )),
   
   control = nlmeControl(opt = "nlm", pnlsMaxIter = 300, msMaxIter = 300)
 )
-
 summary(nlme_reward_pupil_continuous)
 
-summary(nlme_reward_pupil_continuous)
 anova(nlme_reward_pupil_continuous, type = "marginal")
 anova(nlme_reward_pupil_continuous)
 # ways to output model coefficients
 nlme_reward_pupil_continuous$coefficients
-library(ggplot2)
 
 # 1. Extract fixed effects from the REWARD model
 coefs <- fixef(nlme_reward_pupil_continuous)
@@ -125,10 +148,11 @@ ggplot(df_plot, aes(x = pupil_scaled, y = predicted_mu, color = Condition)) +
   scale_color_manual(values = c("No Reward" = "#4A5568", "Reward" = "#DD6B20")) +
   labs(
     title = "Reward Effects on Neural Efficiency",
-    subtitle = "Baseline arousal modulates the effect of Reward on processing efficiency (mu)",
     x = "Baseline Pupil Size (Within-Subject Scaled)",
     y = expression("Predicted Processing Efficiency (" * mu * ")")
   ) +
+  
+  ylim(0.180, 0.220) +
   theme_minimal(base_size = 14) +
   theme(
     legend.position = "bottom",

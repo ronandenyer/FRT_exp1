@@ -16,7 +16,7 @@ shooting <- shooting[!is.na(shooting$peak_tanVel), ]
 shooting$eff_pt <- shooting$eff_pt / 1000
 
 # Remove negative eff_pt trials
-shooting <- shooting[shooting$eff_pt > 0,]
+#shooting <- shooting[shooting$eff_pt > 0,]
 
 
 # 2. Normalize and Scale Vigor Data (Peak Tangential Velocity)
@@ -62,13 +62,13 @@ nlme_reward_vigor_continuous <- nlme(
   success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
   
   fixed = list(
-    mu ~ reward_type * vigor_scaled,  # Now testing the Vigor interaction
+    mu ~ reward_type * vigor_wc,  # Now testing the Vigor interaction
     sigma ~ 1, 
     asym ~ 1, 
     gamma ~ 1
   ), 
   
-  random = mu ~ reward_type | SID, # Kept your updated random effect structure
+  random = list(SID = pdDiag(mu + sigma ~ 1)),
   data = shooting,
   
   start = list(fixed = c(
@@ -96,6 +96,9 @@ vc_all   <- vcov(nlme_reward_vigor_continuous)
 # mu.(Intercept), mu.reward_type2, mu.vigor_scaled, mu.reward_type2:vigor_scaled
 beta <- beta_all[1:4]
 vc   <- vc_all[1:4, 1:4]
+
+# 3. Create Design Matrices
+vigor_range <- seq(-3, 3, length.out = 100)
 
 # 3. Create Design Matrices
 grid_nr <- data.frame(

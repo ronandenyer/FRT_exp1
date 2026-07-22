@@ -74,6 +74,59 @@ nlme_tvns_pupil_continuous <- nlme(
 
 summary(nlme_tvns_pupil_continuous)
 anova(nlme_tvns_pupil_continuous, type = "marginal")
+
+# 1. Create the Within-Subject (State) and Between-Subject (Trait) variables
+shooting <- shooting %>%
+  group_by(SID) %>%
+  mutate(
+    # State: Trial-by-trial fluctuation (Mean is 0 for everyone)
+    pupil_state = pupil_size_mean - mean(pupil_size_mean, na.rm = TRUE),
+    
+    # Trait: The person's overall average baseline
+    pupil_trait = mean(pupil_size_mean, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# 2. Scale both globally so the optimizer doesn't crash
+shooting$pupil_state_scaled <- shooting$pupil_state / sd(shooting$pupil_state, na.rm=T)
+shooting$pupil_trait_scaled <- shooting$pupil_trait / sd(shooting$pupil_trait, na.rm=T)
+
+# 4. Run the Trait + State Model
+nlme_tvns_trait_and_state <- nlme(
+  success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
+  
+  fixed = list(
+    # The new expanded formula
+    mu ~ stim_type * pupil_state_scaled + stim_type * pupil_trait_scaled,   
+    sigma ~ 1,                    
+    asym ~ 1,
+    gamma ~ 1                     
+  ), 
+  
+  random = mu ~ 1 | SID,
+  data = shooting,
+  
+  start = list(fixed = c(
+    #--- mu parameters (Order: Intercept, Main Effects, Interactions) ---
+    0.199,  # 1. mu.(Intercept)
+    0.000,  # 2. mu.stim_type (Main effect of tVNS)
+    0.000,  # 3. mu.pupil_state_scaled (Main effect of State)
+    0.000,  # 4. mu.pupil_trait_scaled (Main effect of Trait)
+    0.000,  # 5. mu.stim_type:pupil_state_scaled (tVNS x State Interaction)
+    0.000,  # 6. mu.stim_type:pupil_trait_scaled (tVNS x Trait Interaction)
+    
+    #--- other parameters ---
+    0.023,  # 7. sigma
+    0.954,  # 8. asym
+    0.254   # 9. gamma
+  )),
+  
+  control = nlmeControl(opt = "nlm", pnlsMaxIter = 100, msMaxIter = 100)
+)
+
+summary(nlme_tvns_trait_and_state)
+
+
 library(nlme)
 
 # 1. Define the subjects and storage
