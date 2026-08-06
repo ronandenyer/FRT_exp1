@@ -23,9 +23,11 @@ shooting <- shooting[!is.na(shooting$eff_pt) &
 shooting$eff_pt <- shooting$eff_pt / 1000 # Convert to seconds
 shooting$pupil_size_phasic_mean_norm <- shooting$pupil_size_phasic_mean_norm * 1e4
 shooting$pupil_size_phasic_mean <- shooting$pupil_size_phasic_mean * 1e4
+shooting$pupil_size_pre_phasic_mean_norm <- shooting$pupil_size_pre_phasic_mean_norm * 1e4
+shooting$pupil_size_pre_phasic_mean <- shooting$pupil_size_pre_phasic_mean * 1e4
 shooting$pupil_size_phasic_slope <- shooting$pupil_size_phasic_slope * 1e4
 shooting$pupil_size_max <- shooting$pupil_size_max * 1e4
-
+shooting$prev_trial_success = as.factor(shooting$prev_trial_success)
 shooting$pupil_size_mean <- shooting$pupil_size_mean * 1e4
 
 # -------------------------------------------------------------------------
@@ -36,6 +38,7 @@ shooting <- shooting %>%
   mutate(
     pupil_state = pupil_size_mean - mean(pupil_size_mean, na.rm = TRUE),
     pupil_phasic = pupil_size_phasic_mean_norm - mean(pupil_size_phasic_mean_norm, na.rm = TRUE),
+    pupil_pre_phasic = pupil_size_pre_phasic_mean_norm - mean(pupil_size_pre_phasic_mean_norm, na.rm = TRUE),
     pupil_slope = pupil_size_phasic_slope - mean(pupil_size_phasic_slope, na.rm = TRUE),
     pupil_max = pupil_size_max - mean(pupil_size_max, na.rm = TRUE),
     pupil_trait = mean(pupil_size_mean, na.rm = TRUE),
@@ -45,6 +48,8 @@ shooting <- shooting %>%
   mutate(
     pupil_state_scaled = pupil_state / sd(pupil_state, na.rm = TRUE),
     pupil_phasic_scaled = pupil_phasic / sd(pupil_phasic, na.rm = TRUE),
+    pupil_pre_phasic_scaled = pupil_pre_phasic / sd(pupil_pre_phasic, na.rm = TRUE),
+    
     pupil_slope_scaled = pupil_slope / sd(pupil_slope, na.rm = TRUE),
     pupil_max_scaled = pupil_max / sd(pupil_max, na.rm = TRUE),
     vigor_scaled = vigor_wc / sd(vigor_wc, na.rm = TRUE)
@@ -54,6 +59,7 @@ shooting <- shooting %>%
 shooting_trimmed <- shooting %>%
   filter(
     abs(pupil_state_scaled) <= 3,
+    abs(pupil_pre_phasic_scaled) <= 3,
     abs(pupil_slope_scaled) <= 3,
     abs(pupil_max_scaled) <= 3,
     abs(vigor_scaled) <= 3
@@ -63,29 +69,45 @@ shooting_trimmed <- shooting %>%
 # -------------------------------------------------------------------------
 # 2B. MAIN EFFECTS OF reward ON MAIN VARIABLES
 # -------------------------------------------------------------------------
+library(dplyr)
 
-# change in baseline pupil (mean average 1 second before reward starts)
+shooting_trimmed <- shooting_trimmed %>%
+  group_by(SID) %>%
+  # lag() automatically shifts the column down by 1 
+  # and correctly inserts NA for the first trial of every participant
+  mutate(reward_previous = lag(reward_type)) %>%
+  ungroup()# change in baseline pupil (mean average 1 second before reward starts)
+
+shooting_prev = shooting_trimmed[!is.nan(shooting_trimmed$prev_trial_success),]
 pupil_state_reward <- lmer(
-  pupil_state ~ reward_type + 
-    (1 + reward_type | SID), 
-  data = shooting_trimmed
+  pupil_max ~ reward_previous*prev_trial_success + 
+    (1  | SID), 
+  data = shooting_prev
 )
 
 summary(pupil_state_reward)
 
 # change in max pupil during phasic ramp (1.5 second window prior to GO cue)
 
-pupil_max_reward <- lmer(
-  pupil_max ~ reward_type + 
-    (1 + reward_type | SID), 
-  data = shooting_trimmed
+pupil_pre_phasic_reward <- lmer(
+  pupil_size_pre_phasic_mean_norm ~ reward_type  + 
+    (1 | SID), 
+  data = shooting
 )
 
-summary(pupil_max_reward)
+summary(pupil_pre_phasic_reward)
+
+pupil_phasic_reward <- lmer(
+  pupil_size_phasic_mean_norm ~ reward_type  + 
+    (1 | SID), 
+  data = shooting
+)
+
+summary(pupil_phasic_reward)
 
 # change in reach peak velocity
 vigor_reward <- lmer(
-  vigor_wc ~ reward_type + 
+  peak_tanVel ~ reward_type + 
     (1 + reward_type | SID), 
   data = shooting_trimmed
 )
@@ -359,7 +381,7 @@ summary(m3_reward_vigor)
 
 # 1. Define the range of vigor_wc to plot
 # (Adjust the -1 and 1 based on the actual min/max of shooting$vigor_wc)
-vigor_seq <- seq(-0.3, 0.3, length.out = 100)
+vigor_seq <- seq(-0.15, 0.15, length.out = 100)
 
 # 2. Extract the fixed effects for mu (baseline intercept and vigor slope)
 coefs <- fixef(m3_reward_vigor)[c("mu.(Intercept)", "mu.vigor_wc")]
@@ -392,14 +414,15 @@ ggplot(plot_df, aes(x = vigor_wc, y = mu_pred)) +
   geom_line(color = "dodgerblue4", linewidth = 1.5) +
   theme_bw(base_size = 15) +
   labs(
-    title = "Effect of Movement Speed on Preparation Time",
+    title = "Effect of Movement Speed on\nPreparation Time",
     x = "Peak Velocty (m/s [mean centred])",
-    y = expression("Estimated Preparation Time (" * mu * ")")
+    y = expression("Estimated Preparation Time ( " * mu * "; s)")
   ) +
   theme(
-    plot.title = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5),
     axis.title = element_text(face = "bold")
   )
+  
 
 # Now do the same but with added lines howing reward effect
 
@@ -445,17 +468,18 @@ ggplot(plot_df, aes(x = vigor_wc, y = mu_pred)) +
   
   theme_bw(base_size = 15) +
   labs(
-    title = "Effect of Movement Speed on Preparation Time",
+    title = "Effect of Movement Speed on\nPreparation Time",
     x = "Peak Velocty (m/s [mean centred])",
-    y = expression("Estimated Preparation Time (" * mu * ")")
+    y = expression("Estimated Preparation Time ( " * mu * "; s)")
   ) +
   theme(
-    plot.title = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5),
     axis.title = element_text(face = "bold")
   )
 
 cat("\n--- Does Vigor scale the Reward effect on Mu? ---\n")
-anova(m2_reward_mu_only, m3_reward_vigor)
+#anova(m2_reward_mu_only, m3_reward_vigor)
+
 
 
 # --- Step C: Add Pupil State (Does arousal modulate the vigor/reward link?) ---
@@ -493,7 +517,7 @@ shooting_trimmed <- shooting_trimmed %>%
 
 # 1. Run a simpler model first (no interactions)
 m_simple <- nlme(success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
-                 fixed = list(mu ~ reward_type + pupil_state + pupil_phasic + vigor_wc, sigma ~ 1, asym ~ 1, gamma ~ 1),
+                 fixed = list(mu ~ reward_type + pupil_pre_phasic + pupil_state +  vigor_wc, sigma ~ 1, asym ~ 1, gamma ~ 1),
                  random = mu ~ 1 | SID, 
                  start = c(
                    # mu parameters: Intercept + 4 slopes (assuming reward_type has 2 levels)
@@ -518,7 +542,7 @@ my_starts <- fixef(m_simple) # This gets you the intercepts
 m4_corrected <- nlme(
   success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
   fixed = list(
-    mu ~ reward_type * pupil_state + pupil_phasic + vigor_wc,
+    mu ~ reward_type * pupil_pre_phasic +  vigor_wc + pupil_state,
     sigma ~ 1, 
     asym ~ 1, 
     gamma ~ 1
@@ -527,7 +551,7 @@ m4_corrected <- nlme(
   data = shooting_trimmed,
   # mu starts: Int, rew, vig, pup, rew:vig, rew:pup, vig:pup, rew:vig:pup
   start = list(fixed = c(
-    my_starts[1:5], 0,
+    my_starts[1:5], 0, 
     my_starts[6:8]
   )),
   control = ctrl
@@ -539,13 +563,13 @@ m4_quadratic <- nlme(
   success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
   fixed = list(
     # Added the quadratic term here
-    mu ~ reward_type * pupil_max_scaled * pupil_state_scaled + I(pupil_state_scaled^2) + vigor_scaled,
+    mu ~ reward_type * pupil_phasic * pupil_state + I(pupil_state^2) + vigor_wc,
     sigma ~ 1, 
     asym ~ 1, 
     gamma ~ 1
   ),
   random = list(SID = pdDiag(mu ~ 1)),
-  data = shooting,
+  data = shooting_trimmed,
   
   # mu starts now requires 10 values. 
   # Order: Int, rew, p_max, p_state, p_state^2 (NEW), vigor, rew:p_max, rew:p_state, p_max:p_state, rew:p_max:p_state
@@ -557,49 +581,53 @@ m4_quadratic <- nlme(
 )
 summary(m4_quadratic)
 anova(m4_quadratic, m4_corrected)
+# 1. Define the range of pupil_phasic to plot
+p_max_seq <- seq(-0.01, 0.01, length.out = 100)
 
-
-
-# 1. Define the range of pupil_max to plot
-p_max_seq <- seq(-0.015, 0.015, length.out = 100)
-
-# 2. Extract the relevant fixed effects
-target_params <- c("mu.(Intercept)", "mu.reward_type2", "mu.pupil_max", "mu.reward_type2:pupil_max")
+# 2. Extract ONLY the relevant fixed effects for this specific line
+# (We drop the pupil_state interaction since we are holding state at 0)
+target_params <- c("mu.(Intercept)", "mu.reward_type2", "mu.pupil_pre_phasic")
 coefs <- fixef(m4_corrected)[target_params]
 
 # 3. Extract the Variance-Covariance matrix
 vcov_mat <- vcov(m4_corrected)[target_params, target_params]
 
 # 4. Build the Marginal Design Matrix
-# Averages the Reward and No Reward conditions (0.5)
-X_marginal <- cbind(1, 0.5, p_max_seq, 0.5 * p_max_seq)
+# Columns: Intercept(1), Reward(averaged at 0.5), pupil_phasic(seq)
+X_marginal <- cbind(1, 0.5, p_max_seq)
 
 # 5. Calculate predicted mu and Standard Errors for the marginal line
 pred_marginal <- X_marginal %*% coefs
 se_marginal <- sqrt(diag(X_marginal %*% vcov_mat %*% t(X_marginal)))
 
 # 6. Define the empirical means from your lmer model
-pmax_no_reward <- -0.0007554
-pmax_reward <- -0.0007554 + 0.0006746 # Equals -0.0000808
+pmax_no_reward <- -1.128e-03 
+pmax_reward <- -1.128e-03 + 5.787e-04  # Equals -0.0000808
 
 # 7. Calculate exact predicted mu for these means ON THE MARGINAL LINE
 marginal_intercept <- coefs["mu.(Intercept)"] + (0.5 * coefs["mu.reward_type2"])
-marginal_slope <- coefs["mu.pupil_max"] + (0.5 * coefs["mu.reward_type2:pupil_max"])
+
+# Because there is no interaction term anymore, the slope is just the main effect!
+marginal_slope <- coefs["mu.pupil_pre_phasic"] 
 
 mu_no_reward_marginal <- marginal_intercept + (marginal_slope * pmax_no_reward)
 mu_reward_marginal <- marginal_intercept + (marginal_slope * pmax_reward)
 
 # 8. Create the plotting dataframe
 plot_df <- data.frame(
-  pupil_max = p_max_seq,
+  pupil_pre_phasic = p_max_seq,
   mu_pred = as.vector(pred_marginal),
   ci_lower = as.vector(pred_marginal - 1.96 * se_marginal),
   ci_upper = as.vector(pred_marginal + 1.96 * se_marginal)
 )
 
+# Make sure your colors are defined before plotting
+color_no_reward <- "gray10" 
+color_reward    <- "#ff5050" 
+
 # 9. Generate the single-line plot with custom colored drop-lines
-ggplot(plot_df, aes(x = pupil_max, y = mu_pred)) +
-  geom_ribbon(aes(ymin = ci_lower, ymax = ci_upper), fill = "purple", alpha = 0.2) +
+pre_phasic_mu = ggplot(plot_df, aes(x = pupil_pre_phasic, y = mu_pred)) +
+  #geom_ribbon(aes(ymin = ci_lower, ymax = ci_upper), fill = "purple", alpha = 0.2) +
   geom_line(color = "purple4", linewidth = 1.5) +
   
   # --- DROP-LINES: NO REWARD ---
@@ -624,14 +652,25 @@ ggplot(plot_df, aes(x = pupil_max, y = mu_pred)) +
   
   theme_bw(base_size = 15) +
   labs(
-    title = "Effect of Phasic Arousal on Preparation Time",
-    x = "Phasic Pupil Response (a.u., [mean-centered])",
-    y = expression("Estimated Preparation Time (" * mu * ")")
+    title = "Effect of Pupil Size on \nPreparation Time",
+    x = "Pre Prep Tone Pupil Size\n(a.u., [mean-centered])",
+    y = expression("Estimated Preparation Time ( " * mu * "; s)")
   ) +
   theme(
-    plot.title = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", hjust = 0.5),
     axis.title = element_text(face = "bold")
-  )
+  ) +
+  ylim(0.185, 0.21)
+
+# Save the composite plot as a 300 DPI high-resolution PNG
+ggsave(
+  filename = "pre_phasic_mu.png",
+  plot = pre_phasic_mu,
+  width = 390*(300/96),
+  height = 550*(300/96),
+  dpi = 300,
+  units = "px"
+)
 
 # 1. Update the control to include a minimum bound for the parameters
 # The 'msMinPar' defines the lower bound for the parameters in the order 
@@ -646,35 +685,65 @@ strat_check_model <- lmer(
 summary(strat_check_model)
 
 pupil_check_model <- lmer(
-  vigor_wc ~ pupil_max + (1  | SID), 
+  peak_tanVel ~ pupil_size_pre_phasic_mean_norm + (1 + pupil_size_pre_phasic_mean_norm | SID), 
   data = shooting_trimmed
 )
 
 summary(pupil_check_model)
 # Load required librar
+library(ggplot2)
+library(dplyr)
 
-# Generate the plot directly from your trimmed dataframe
-ggplot(shooting_trimmed, aes(x = pupil_max, y = vigor_wc)) +
+# ==========================================
+# USER CONFIGURATION: Color Control
+# ==========================================
+use_reward_color <- TRUE  # Set to FALSE to disable reward coloring and revert to gray dots
+reward_colors    <- c("No Reward" = "gray10", "Reward" = "#ff5050")
+
+# 1. Prepare data with readable condition labels
+df_plot <- shooting_trimmed %>%
+  mutate(condition_name = if_else(reward_type == 1, "No Reward", "Reward"))
+
+# 2. Generate the plot with conditional reward coloring
+pre_phasic_vigor = ggplot(df_plot, aes(x = pupil_pre_phasic, y = vigor_wc)) +
   
-  # Add raw data points with high transparency to prevent the "black blob" effect
-  # The points will naturally cluster and darken around the center
-  geom_point(alpha = 0.05, color = "gray30", size = 1.5) +
+  # Conditional points mapping based on configuration parameter
+  {if (use_reward_color) {
+    geom_point(aes(color = condition_name), alpha = 0.1, size = 1.5)
+  } else {
+    geom_point(alpha = 0.05, color = "gray30", size = 1.5)
+  }} +
+  
+  # Custom color scale applied if reward coloring is enabled
+  {if (use_reward_color) {
+    scale_color_manual(values = reward_colors)
+  }} +
   
   # Add the linear regression line 
-  # Because random effects variance was 0, this exactly matches your lmer fixed effect
   geom_smooth(method = "lm", color = "black", fill = "dodgerblue", 
               linewidth = 1.5, alpha = 0.3) +
   
-  # Optional: Add a dashed horizontal line at y = 0 to anchor the visual center of vigor
+  # Dashed horizontal line at y = 0 to anchor the visual center of vigor
   geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
   
   theme_bw(base_size = 15) +
   labs(
-    title = "Phasic Arousal and Movement Speed are Uncorrelated",
-    x = "Phasic Pupil Response (a.u., [mean centered])",
-    y = "Movement Vigor (m/s, [mean centered])"
+    x = "Pre Prep Tone Pupil Size\n(a.u., [mean-centered])",
+    y = "Movement Vigor (m/s, [mean centered])",
+    color = "Condition"
   ) +
   theme(
     plot.title = element_text(face = "bold", size = 14, hjust = 0.5),
-    axis.title = element_text(face = "bold")
+    axis.title = element_text(face = "bold"),
+    legend.position = if (use_reward_color) "right" else "none"
   )
+
+# Save the composite plot as a 300 DPI high-resolution PNG
+ggsave(
+  filename = "pre_phasic_vigor.png",
+  plot = pre_phasic_vigor,
+  width = 800*(300/96),
+  height = 550*(300/96),
+  dpi = 300,
+  units = "px"
+)

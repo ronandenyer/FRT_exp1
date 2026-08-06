@@ -27,8 +27,8 @@ function model = fit_model(RT,hit)%,fixed_params)
         paramsInit = [.15 .05 .25 .95];
         
         % [mu (mean time), sigma (slope), qI (lower asymptote), qA (upper asymptote)]
-        LB = [0 .01 .25 .5]; % lower bound on parameters
-        UB = [.5 10 .25 1]; % upper bound on parameters
+        LB = [0 .01 .1 .5]; % lower bound on parameters
+        UB = [.5 10 .4 1]; % upper bound on parameters
         
         A = []; B = []; % inequality constraints
 Aeq = []; Beq = [];

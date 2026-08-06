@@ -66,7 +66,7 @@ shooting_trimmed <- shooting %>%
 
 # change in baseline pupil (mean average 1 second before reward starts)
 pupil_state_reward <- lmer(
-  pupil_state ~ reward_type + 
+  peak_tanVel ~ reward_type*rt + 
     (1 + reward_type | SID), 
   data = shooting_trimmed
 )

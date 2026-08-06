@@ -25,6 +25,8 @@ shooting <- shooting[!is.na(shooting$eff_pt) &
 shooting$eff_pt <- shooting$eff_pt / 1000 # Convert to seconds
 shooting$pupil_size_phasic_mean_norm <- shooting$pupil_size_phasic_mean_norm * 1e4
 shooting$pupil_size_phasic_mean <- shooting$pupil_size_phasic_mean * 1e4
+shooting$pupil_size_pre_phasic_mean_norm <- shooting$pupil_size_pre_phasic_mean_norm * 1e4
+shooting$pupil_size_pre_phasic_mean <- shooting$pupil_size_pre_phasic_mean * 1e4
 shooting$pupil_size_phasic_slope <- shooting$pupil_size_phasic_slope * 1e4
 shooting$pupil_size_max <- shooting$pupil_size_max * 1e4
 
@@ -38,6 +40,8 @@ shooting <- shooting %>%
   mutate(
     pupil_state = pupil_size_mean - mean(pupil_size_mean, na.rm = TRUE),
     pupil_phasic = pupil_size_phasic_mean_norm - mean(pupil_size_phasic_mean_norm, na.rm = TRUE),
+    pupil_pre_phasic = pupil_size_pre_phasic_mean_norm - mean(pupil_size_pre_phasic_mean_norm, na.rm = TRUE),
+    
     pupil_slope = pupil_size_phasic_slope - mean(pupil_size_phasic_slope, na.rm = TRUE),
     pupil_max = pupil_size_max - mean(pupil_size_max, na.rm = TRUE),
     pupil_trait = mean(pupil_size_mean, na.rm = TRUE),
@@ -47,6 +51,8 @@ shooting <- shooting %>%
   mutate(
     pupil_state_scaled = pupil_state / sd(pupil_state, na.rm = TRUE),
     pupil_phasic_scaled = pupil_phasic / sd(pupil_phasic, na.rm = TRUE),
+    pupil_pre_phasic_scaled = pupil_pre_phasic / sd(pupil_pre_phasic, na.rm = TRUE),
+    
     pupil_slope_scaled = pupil_slope / sd(pupil_slope, na.rm = TRUE),
     pupil_max_scaled = pupil_max / sd(pupil_max, na.rm = TRUE),
     vigor_scaled = vigor_wc / sd(vigor_wc, na.rm = TRUE)
@@ -56,6 +62,8 @@ shooting <- shooting %>%
 shooting_trimmed <- shooting %>%
   filter(
     abs(pupil_state_scaled) <= 3,
+    abs(pupil_pre_phasic_scaled) <= 3,
+    
     abs(pupil_slope_scaled) <= 3,
     abs(pupil_max_scaled) <= 3,
     abs(vigor_scaled) <= 3
@@ -67,10 +75,21 @@ shooting_trimmed <- shooting %>%
 
 # change in baseline pupil (mean average 1 second before tvns starts)
 pupil_state_tvns <- lmer(
-  pupil_state ~ stim_type + 
+  pupil_size_phasic_mean_norm ~ stim_type*pupil_size_pre_phasic_mean_norm  + 
     (1 + stim_type | SID), 
   data = shooting_trimmed
 )
+
+summary(pupil_state_tvns)
+
+# change in baseline pupil (mean average 1 second before tvns starts)
+pupil_state_tvns <- lmer(
+  pupil_pre_phasic ~ stim_type  + 
+    (1 + stim_type | SID), 
+  data = shooting_trimmed
+)
+
+
 
 summary(pupil_state_tvns)
 
@@ -84,6 +103,14 @@ pupil_max_tvns <- lmer(
 
 summary(pupil_max_tvns)
 
+pupil_prev_trial_tvns <- lmer(
+  pupil_size_mean ~ stim_type*prev_trial_success + 
+    (1 + stim_type + prev_trial_success | SID), 
+  data = shooting_trimmed
+)
+
+summary(pupil_prev_trial_tvns)
+
 # change in reach peak velocity
 vigor_tvns <- lmer(
   vigor_wc ~ stim_type + 
@@ -92,6 +119,22 @@ vigor_tvns <- lmer(
 )
 
 summary(vigor_tvns)
+
+vigor_prev_trial_tvns <- lmer(
+  peak_tanVel ~ prev_trial_success + 
+    (1 + prev_trial_success | SID), 
+  data = shooting_trimmed
+)
+
+summary(vigor_prev_trial_tvns)
+
+rt_prev_trial_tvns <- lmer(
+  rt ~ prev_trial_success*stim_type + 
+    (1 + prev_trial_success | SID), 
+  data = shooting_trimmed
+)
+
+summary(rt_prev_trial_tvns)
 
 
 # -------------------------------------------------------------------------
@@ -137,11 +180,23 @@ shooting.no_asym_int_nlme <- nlme(
   data = shooting_trimmed,
   start = list(fixed = c(0.2, -0.01, 0.02, 0.95, 0.25))
 )
+summary(shooting.no_asym_int_nlme)
 
 # Test 1: Can we drop the asymptote parameter? (Expecting p > 0.05)
 cat("\n--- LRT: Can we drop Asymptote from the model? ---\n")
 
+shooting_post_error = shooting_trimmed[!is.na(shooting_trimmed$prev_trial_success),]
 
+shooting.prev_trial_int_nlme <- nlme(
+  success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
+  fixed = list(mu ~ stim_type * prev_trial_success + vigor_wc + pupil_state, sigma ~ 1, asym ~ stim_type*prev_trial_success, gamma ~ 1), 
+  random = list(SID = pdDiag(mu + asym + sigma ~ 1)),
+  data = shooting_post_error,
+  # The starting vector requires 7 values now: 
+  # 4 for mu (Intercept, stim_type, prev_trial_success, interaction) + 1 for sigma + 1 for asym + 1 for gamma
+  start = list(fixed = c(0.2, -0.01, 0.00, 0, 0, 0.00, 0.02, 0.95, 0, 0, 0, 0.25))
+)
+summary(shooting.prev_trial_int_nlme)
 # ------------------------------------------------------------------------------
 # SECTION 3: STATE-DEPENDENT HYPOTHESIS & TRAIT CONTROL
 # ------------------------------------------------------------------------------
@@ -150,7 +205,7 @@ cat("\n--- LRT: Can we drop Asymptote from the model? ---\n")
 # Step A: Fit a main-effects only model first (this almost always converges)
 m_tvns_main <- nlme(
   success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
-  fixed = list(mu ~ stim_type + pupil_state + pupil_phasic, sigma ~ 1, asym ~ 1, gamma ~ 1),
+  fixed = list(mu ~ stim_type + pupil_state + pupil_pre_phasic, sigma ~ 1, asym ~ 1, gamma ~ 1),
   random = list(SID = pdDiag(mu ~ 1)),
   data = shooting_trimmed, # Make sure this is trimmed!
   start = list(fixed = c(nls_coefs["mu"], 0, 0, 0, nls_coefs["sigma"], nls_coefs["asym"], nls_coefs["gamma"]))
@@ -175,63 +230,108 @@ new_starts <- c(
 nlme_tvns_pupil_state <- nlme(
   success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
   fixed = list(
-    mu ~ stim_type * pupil_state + pupil_phasic,
+    mu ~ stim_type*pupil_pre_phasic + pupil_state,
     sigma ~ 1, asym ~ 1, gamma ~ 1
   ),
   random = mu ~ 1 | SID,
-  data = shooting_trimmed,
+  data = shooting,
   start = new_starts,
   control = nlmeControl(opt = "nlminb", pnlsMaxIter = 1000, msMaxIter = 1000)
 )
 
 summary(nlme_tvns_pupil_state)
 
-anova(shooting.nlme, shooting.no_asym_int_nlme, nlme_tvns_pupil_state)
+library(ggplot2)
+library(dplyr)
 
-# try with 3 way interaction
+# 1. Define the range of pupil_pre_phasic to plot
+p_max_seq <- seq(-0.01, 0.01, length.out = 100)
 
+# 2. Extract the relevant fixed effects (including the interaction term)
+target_params <- c("mu.(Intercept)", "mu.stim_type2", "mu.pupil_pre_phasic")
+coefs <- fixef(nlme_tvns_pupil_state)[target_params] # Replace 'model' with your actual nlme model object name if different
 
-# Step A: Fit a main-effects only model first (this almost always converges)
-m_tvns_main <- nlme(
-  success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
-  fixed = list(mu ~ stim_type + pupil_state + pupil_phasic + vigor_wc, sigma ~ 1, asym ~ 1, gamma ~ 1),
-  random = list(SID = pdDiag(mu ~ 1)),
-  data = shooting_trimmed, # Make sure this is trimmed!
-  start = list(fixed = c(nls_coefs["mu"], 0, 0, 0, 0, nls_coefs["sigma"], nls_coefs["asym"], nls_coefs["gamma"]))
+# 3. Extract the Variance-Covariance matrix for these parameters
+vcov_mat <- vcov(nlme_tvns_pupil_state)[target_params, target_params]
+# 4. Build the Marginal Design Matrix (holding stim_type at 0.5 to average across conditions)
+# Columns: Intercept(1), stim_type (0.5), pupil_pre_phasic (seq)
+X_marginal <- cbind(1, 0.5, p_max_seq)
+
+# 5. Calculate predicted mu and Standard Errors for the single marginal line
+pred_marginal <- X_marginal %*% coefs
+se_marginal <- sqrt(diag(X_marginal %*% vcov_mat %*% t(X_marginal)))
+
+# 6. Calculate empirical means of pupil_pre_phasic for each condition
+pmax_sham <- mean(shooting$pupil_pre_phasic[shooting$stim_type == 1], na.rm = TRUE)
+pmax_tvns <- mean(shooting$pupil_pre_phasic[shooting$stim_type == 2], na.rm = TRUE)
+
+# 7. Calculate exact predicted mu for these means ON THE MARGINAL LINE
+marginal_intercept <- coefs["mu.(Intercept)"] + (0.5 * coefs["mu.stim_type2"])
+marginal_slope <- coefs["mu.pupil_pre_phasic"]
+
+mu_sham_marginal <- marginal_intercept + (marginal_slope * pmax_sham)
+mu_tvns_marginal <- marginal_intercept + (marginal_slope * pmax_tvns)
+
+# 8. Create the plotting dataframe for the single line
+plot_df <- data.frame(
+  pupil_pre_phasic = p_max_seq,
+  mu_pred = as.vector(pred_marginal),
+  ci_lower = as.vector(pred_marginal - 1.96 * se_marginal),
+  ci_upper = as.vector(pred_marginal + 1.96 * se_marginal)
 )
-# 1. Ensure starts_main is extracted correctly
-starts_main <- fixef(m_tvns_main) 
-# starts_main should have: (Intercept), stim_type2, pupil_state, pupil_max, sigma, asym, gamma (7 total)
 
-# 2. Build the start vector for the 5-coefficient mu model
-# mu: Int, stim, state, max, stim:state  (5 values)
-# Then: sigma, asym, gamma (3 values)
-new_starts <- c(
-  starts_main[1],          # Intercept
-  starts_main[2],          # stim_type2
-  starts_main[3],          # pupil_state
-  starts_main[4],          # pupil_max
-  #starts_main[5],          # vigor_wc
+# Define custom colors for the drop-lines
+color_sham <- "#3498db"  
+color_tvns <- "green"  
+
+# 9. Generate the single-line plot with custom colored drop-lines
+pre_phasic_mu_tvns = ggplot(plot_df, aes(x = pupil_pre_phasic, y = mu_pred)) +
+  # Confidence ribbon around the single line
+  #geom_ribbon(aes(ymin = ci_lower, ymax = ci_upper), fill = "purple", alpha = 0.2, linetype = 0) +
+  # Single main trajectory line
+  geom_line(color = "purple4", linewidth = 1.5) +
   
-  0,                       # New interaction term (stim:state)
+  # --- DROP-LINES: SHAM ---
+  geom_segment(aes(x = pmax_sham, xend = pmax_sham, y = -Inf, yend = mu_sham_marginal), 
+               linetype = "dashed", color = color_sham, linewidth = 1) +
+  geom_segment(aes(x = -Inf, xend = pmax_sham, y = mu_sham_marginal, yend = mu_sham_marginal), 
+               linetype = "dashed", color = color_sham, linewidth = 1) +
+  geom_point(aes(x = pmax_sham, y = mu_sham_marginal), color = color_sham, size = 4) +
+  
+  # --- DROP-LINES: tVNS ---
+  geom_segment(aes(x = pmax_tvns, xend = pmax_tvns, y = -Inf, yend = mu_tvns_marginal), 
+               linetype = "dashed", color = color_tvns, linewidth = 1) +
+  geom_segment(aes(x = -Inf, xend = pmax_tvns, y = mu_tvns_marginal, yend = mu_tvns_marginal), 
+               linetype = "dashed", color = color_tvns, linewidth = 1) +
+  geom_point(aes(x = pmax_tvns, y = mu_tvns_marginal), color = color_tvns, size = 4) +
+  
+  # --- ANNOTATIONS ---
+  annotate("text", x = pmax_sham - 0.001, y = mu_sham_marginal + 0.002, 
+           label = "Sham Mean", color = color_sham, fontface = "bold", hjust = 1) +
+  annotate("text", x = pmax_tvns + 0.001, y = mu_tvns_marginal - 0.002, 
+           label = "tVNS Mean", color = color_tvns, fontface = "bold", hjust = 0) +
+  
+  theme_bw(base_size = 15) +
+  labs(
+    title = "Effect of Pre-Phasic Pupil Size on\nPreparation Time (tVNS)",
+    x = "Pre Prep Tone Pupil Size\n(a.u., [mean-centered])",
+    y = expression("Estimated Preparation Time ( " * mu * "; s)")
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    axis.title = element_text(face = "bold")
+  )+
+  ylim(0.185, 0.21)
 
-  starts_main[6:8]         # sigma, asym, gamma
+# Save the composite plot as a 300 DPI high-resolution PNG
+ggsave(
+  filename = "pre_phasic_mu_tvns.png",
+  plot = pre_phasic_mu_tvns,
+  width = 390*(300/96),
+  height = 550*(300/96),
+  dpi = 300,
+  units = "px"
 )
-
-# 3. Run the model with a more robust optimizer
-nlme_tvns_pupil_state_int <- nlme(
-  success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
-  fixed = list(
-    mu ~ stim_type * pupil_state  + pupil_phasic,
-    sigma ~ 1, asym ~ 1, gamma ~ 1
-  ),
-  random = mu ~ 1 | SID,
-  data = shooting_trimmed,
-  start = new_starts,
-  control = nlmeControl(opt = "nlminb", pnlsMaxIter = 1000, msMaxIter = 1000)
-)
-
-summary(nlme_tvns_pupil_state_int)
 
 # Load required library
 if(!require(ggplot2)) install.packages("ggplot2")

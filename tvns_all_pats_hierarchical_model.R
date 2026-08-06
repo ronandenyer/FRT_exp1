@@ -35,13 +35,13 @@ shooting.nlme <- nlme(
                asym ~ stim_type, 
                gamma ~ 1), 
   
-  random = mu ~ 1 | SID,
+  random = mu + sigma ~ 1 | SID,
   data = shooting,
   
   # Update start values: you now need 7 values 
   # (2 for mu, 2 for sigma, 2 for asym, and 1 for gamma)
   start = list(fixed = c(0.2, -0.01,  # mu (Intercept, diff)
-                         0.02, 0, # sigma (Intercept, diff)
+                         0.02, # sigma (Intercept, diff)
                          0.95, 0.01,  # asym (Intercept, diff)
                          0.25))       # gamma (the guess rate)
 )
@@ -108,7 +108,7 @@ plot_data <- expand.grid(
 )
 
 # 2. Predict success probability using your model (fixed effects only)
-plot_data$predicted_prob <- predict(shooting.nlmecomplex, newdata = plot_data, level = 0)
+plot_data$predicted_prob <- predict(shooting.nlme, newdata = plot_data, level = 0)
 
 # 3. Plot it
 ggplot(plot_data, aes(x = eff_pt, y = predicted_prob, color = stim_type)) +
@@ -177,12 +177,12 @@ axis_text_size = 26
 tvns_curve = ggplot() +
   # Plot the raw binned data points
   # The size of the point represents how much data is in that bin
-  #geom_line(data = indiv_grid, 
-   #         aes(x = eff_pt, y = predicted_indiv, color = stim_type, group = interaction(SID, stim_type)), 
-    #        alpha = 0.15, linewidth = 0.4) + # Low alpha makes them "faint"
-  #geom_point(data = shooting_binned, 
-  #           aes(x = bin, y = prop_success, color = stim_type, size = n), 
-   #          alpha = 0.4) +
+  geom_line(data = indiv_grid, 
+            aes(x = eff_pt, y = predicted_indiv, color = stim_type, group = interaction(SID, stim_type)), 
+            alpha = 0.15, linewidth = 0.4) + # Low alpha makes them "faint"
+  geom_point(data = shooting_binned, 
+             aes(x = bin, y = prop_success, color = stim_type, size = n), 
+             alpha = 0.4) +
   # Plot the model-fitted lines
   geom_line(data = plot_grid, 
             aes(x = eff_pt, y = predicted, color = stim_type), 
@@ -192,7 +192,7 @@ tvns_curve = ggplot() +
                      labels = c("Sham", "tVNS")) +
   scale_size_area(max_size = 8) +
   geom_hline(yintercept = 0.25, linetype = "dashed", alpha = 0.5) + # The 1/4 chance floor
-  #annotate("text", x = 0.4, y = 0.28, label = "Chance (25%)", size = 3, alpha = 0.5) +
+  annotate("text", x = 0.4, y = 0.28, label = "Chance (25%)", size = 3, alpha = 0.5) +
   labs(
     x = "Preparation Time (s)",
     y = "Probability of Success",
@@ -220,3 +220,14 @@ tvns_curve = ggplot() +
     plot.tag = element_text(size = 45, face = "bold", hjust = 0, vjust = 1)
   ) 
 tvns_curve
+
+
+# Save the composite plot as a 300 DPI high-resolution PNG
+ggsave(
+  filename = "tvns_curve.png",
+  plot = tvns_curve,
+  width = 680 * (300 / 96),
+  height = 500 * (300 / 96),
+  dpi = 300,
+  units = "px"
+)
