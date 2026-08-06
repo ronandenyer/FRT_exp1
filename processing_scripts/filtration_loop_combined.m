@@ -2,7 +2,7 @@ close all
 
 %% Participant details
 
-base_dir = 'C:\Users\denyer\OneDrive - UCL\FRT_data\Combined_experiment'; 
+%base_dir = 'C:\Users\denyer\OneDrive - UCL\FRT_data\Combined_experiment'; 
 pat_dir = strcat(base_dir, '\', pat);
 
 files = dir(pat_dir); 

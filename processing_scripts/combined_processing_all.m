@@ -1,5 +1,5 @@
 %% Run all processing scripts for all participants
-pats = {'FRTC02', 'FRTC05'};
+pats = {'FRTC01'};
 base_dir = 'C:\Users\denyer\OneDrive - UCL\FRT_data\Combined_experiment'; 
 
 for a = 1:length(pats)

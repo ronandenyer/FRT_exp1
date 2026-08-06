@@ -1,12 +1,12 @@
 %% Define Participant detailspat = 'ALAN';
 %pat = 'FRTC01';
-base_dir = 'C:\Users\denyer\OneDrive - UCL\FRT_data\Combined_experiment'; 
+%base_dir = 'C:\Users\denyer\OneDrive - UCL\FRT_data\Combined_experiment'; 
 pat_dir = strcat(base_dir, '\', pat);
 
 %% Loop through each block of trials and create simplified table with key data
 
 num_blocks = 8;
-num_days = 1;
+num_days = 2;
 fs = 1000;
 origin = [0, 0.25];
 Compact_all = table();
