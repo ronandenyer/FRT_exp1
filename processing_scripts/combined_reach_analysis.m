@@ -1,5 +1,5 @@
 %% Define Participant details
-pat = 'FRTC05';
+%pat = 'FRTC05';
 base_dir = 'C:\Users\denyer\OneDrive - UCL\FRT_data\Combined_experiment'; 
 pat_dir = strcat(base_dir, '\', pat);
 
