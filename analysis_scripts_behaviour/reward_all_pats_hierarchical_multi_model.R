@@ -85,8 +85,8 @@ summary(pupil_max_reward)
 
 # change in reach peak velocity
 vigor_reward <- lmer(
-  vigor_wc ~ reward_type + 
-    (1 + reward_type | SID), 
+  vigor_wc ~ reward_type*pupil_state + 
+    (1 + reward_type + pupil_state | SID), 
   data = shooting_trimmed
 )
 
