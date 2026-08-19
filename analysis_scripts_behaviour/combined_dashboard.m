@@ -1,5 +1,5 @@
 %% 1. Define Participant details and Load Data
-pat = 'FRTC05'; % Udate with the subject ID you want to inspect
+pat = 'FRTC03'; % Udate with the subject ID you want to inspect
 base_dir = 'C:\Users\denyer\OneDrive - UCL\FRT_data\Combined_experiment'; 
 pat_dir = fullfile(base_dir, pat);
 

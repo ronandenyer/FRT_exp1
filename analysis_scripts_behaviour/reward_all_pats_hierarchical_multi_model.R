@@ -20,34 +20,61 @@ shooting <- shooting[!is.na(shooting$eff_pt) &
                        !is.na(shooting$pupil_size_mean), ]
 
 # Standardize units (Fixed double division of eff_pt)
-shooting$eff_pt <- shooting$eff_pt / 1000 # Convert to seconds
+shooting$eff_pt <- (shooting$eff_pt + 40) / 1000 # Convert to seconds
+shooting$rt <- (shooting$rt + 40)/1000 # Convert to seconds
+
 shooting$pupil_size_phasic_mean_norm <- shooting$pupil_size_phasic_mean_norm * 1e4
 shooting$pupil_size_phasic_mean <- shooting$pupil_size_phasic_mean * 1e4
+shooting$pupil_size_pre_phasic_mean <- shooting$pupil_size_pre_phasic_mean * 1e4
+shooting$pupil_size_pre_phasic_mean_norm <- shooting$pupil_size_pre_phasic_mean_norm * 1e4
+
 shooting$pupil_size_phasic_slope <- shooting$pupil_size_phasic_slope * 1e4
 shooting$pupil_size_max <- shooting$pupil_size_max * 1e4
 
 shooting$pupil_size_mean <- shooting$pupil_size_mean * 1e4
 
+shooting$post_cue_mean_force_z_abs = abs(shooting$post_cue_mean_force_z)
+shooting$baseline_mean_force_z_abs = abs(shooting$baseline_mean_force_z)
+
+shooting <- shooting %>%
+  group_by(SID) %>%
+  mutate(prev_trial_reward_type = lag(reward_type)) %>%
+  ungroup()
+shooting$prev_trial_reward_type[shooting$trial_num == 1] <- NA
 # -------------------------------------------------------------------------
 # 2. WITHIN-SUBJECT CENTERING & SCALING
 # -------------------------------------------------------------------------
 shooting <- shooting %>%
   group_by(SID) %>%
   mutate(
-    pupil_state = pupil_size_mean - mean(pupil_size_mean, na.rm = TRUE),
-    pupil_phasic = pupil_size_phasic_mean_norm - mean(pupil_size_phasic_mean_norm, na.rm = TRUE),
+    pupil_state = pupil_size_mean - median(pupil_size_mean, na.rm = TRUE),
+    pupil_phasic = pupil_size_phasic_mean_norm - median(pupil_size_phasic_mean_norm, na.rm = TRUE),
+    pupil_phasic_raw = pupil_size_phasic_mean - median(pupil_size_phasic_mean, na.rm = TRUE),
+    
+    pupil_pre_phasic = pupil_size_pre_phasic_mean_norm - median(pupil_size_phasic_mean_norm, na.rm = TRUE),
+    pupil_pre_phasic_raw = pupil_size_pre_phasic_mean - mean(pupil_size_phasic_mean, na.rm = TRUE),
     pupil_slope = pupil_size_phasic_slope - mean(pupil_size_phasic_slope, na.rm = TRUE),
     pupil_max = pupil_size_max - mean(pupil_size_max, na.rm = TRUE),
     pupil_trait = mean(pupil_size_mean, na.rm = TRUE),
-    vigor_wc = peak_tanVel - mean(peak_tanVel, na.rm = TRUE)
+    vigor_wc = peak_tanVel - median(peak_tanVel, na.rm = TRUE),
+    post_force_z = post_cue_mean_force_z - median(post_cue_mean_force_z, na.rm = TRUE),
+    post_force_abs = post_cue_mean_force_z_abs - median(post_cue_mean_force_z_abs, na.rm = TRUE),
+    
+    baseline_force_z = baseline_mean_force_z - median(baseline_mean_force_z, na.rm = TRUE),
+    baseline_force_abs = baseline_mean_force_z_abs - median(baseline_mean_force_z_abs, na.rm = TRUE)
+    
   ) %>%
   ungroup() %>%
   mutate(
     pupil_state_scaled = pupil_state / sd(pupil_state, na.rm = TRUE),
     pupil_phasic_scaled = pupil_phasic / sd(pupil_phasic, na.rm = TRUE),
+    pupil_pre_phasic_scaled = pupil_pre_phasic / sd(pupil_pre_phasic, na.rm = TRUE),
+    pupil_pre_phasic_raw_scaled = pupil_pre_phasic_raw / sd(pupil_pre_phasic_raw, na.rm = TRUE),
     pupil_slope_scaled = pupil_slope / sd(pupil_slope, na.rm = TRUE),
     pupil_max_scaled = pupil_max / sd(pupil_max, na.rm = TRUE),
-    vigor_scaled = vigor_wc / sd(vigor_wc, na.rm = TRUE)
+    vigor_scaled = vigor_wc / sd(vigor_wc, na.rm = TRUE),
+    post_force_z_scaled = post_force_z / sd(post_force_z, na.rm = TRUE),
+    baseline_force_abs_scaled = baseline_force_abs / sd(baseline_force_abs, na.rm = TRUE)
   )
 
 # Trimmed dataset (Generated but held in reserve, models use 'shooting')
@@ -56,8 +83,54 @@ shooting_trimmed <- shooting %>%
     abs(pupil_state_scaled) <= 3,
     abs(pupil_slope_scaled) <= 3,
     abs(pupil_max_scaled) <= 3,
-    abs(vigor_scaled) <= 3
+    abs(vigor_scaled) <= 3,
+    abs(pupil_pre_phasic_scaled) <= 3
+    
   )
+
+shooting_force_trimmed <- shooting %>%
+  filter(
+
+    abs(vigor_scaled) <= 3,
+    abs(post_force_z_scaled) <= 3
+    
+  )
+# testing residual approach
+# 1. Regress the maximum pupil size on the baseline state
+# We do this within-subject to account for individual anatomical limits
+shooting_trimmed <- shooting_trimmed %>%
+  group_by(SID) %>%
+  mutate(
+    # The residuals represent the true phasic burst independent of baseline
+    phasic_residual = resid(lm(pupil_phasic ~ pupil_state, na.action = na.exclude))
+  ) %>%
+  ungroup()
+
+shooting_trimmed <- shooting_trimmed %>%
+  group_by(SID) %>%
+  mutate(
+    # The residuals represent the true phasic burst independent of baseline
+    pre_phasic_residual = resid(lm(pupil_pre_phasic ~ pupil_state, na.action = na.exclude))
+  ) %>%
+  ungroup()
+
+# 1. Fit a linear model predicting phasic dilation from the baseline state
+# We use na.action = na.exclude to ensure the residuals map correctly back 
+# to the rows in the dataframe, even if some trials have NAs.
+m_pupil_correction <- lm(
+  pupil_phasic ~ pupil_state, 
+  data = shooting_trimmed, 
+  na.action = na.exclude
+)
+
+# 2. Extract the residuals and add them to your dataframe
+# A positive residual means they dilated MORE than expected for their baseline.
+# A negative residual means they dilated LESS than expected.
+shooting_trimmed$phasic_residual <- resid(m_pupil_correction)
+
+# 3. Optional but recommended: Scale the new residual metric
+# This makes the coefficient in your nlme model comparable to vigor_scaled
+shooting_trimmed$phasic_residual_scaled <- scale(shooting_trimmed$phasic_residual)
 
 
 # -------------------------------------------------------------------------
@@ -65,101 +138,85 @@ shooting_trimmed <- shooting %>%
 # -------------------------------------------------------------------------
 
 # change in baseline pupil (mean average 1 second before reward starts)
+rt_sub_data = shooting_trimmed[shooting_trimmed$rt > 0.1 & shooting_trimmed$rt < 1, ]
+
 pupil_state_reward <- lmer(
-  peak_tanVel ~ reward_type*rt + 
+  vigor_wc ~ reward_type*rt + 
     (1 + reward_type | SID), 
-  data = shooting_trimmed
+  data = rt_sub_data
 )
 
 summary(pupil_state_reward)
 
+
+
+rt_force <- lmer(
+  rt ~ post_force_abs*reward_type + 
+    (1  | SID), 
+  data = shooting_force_trimmed)
+
+summary(rt_force)
+
+force_z_reward <- lmer(
+  post_force_abs ~ reward_type + 
+    (1 + reward_type | SID), 
+  data = shooting_force_trimmed
+)
+
+summary(force_z_reward)
+
+force_z_pupil_reward = lmer(
+  baseline_force_abs ~ pupil_state * prev_trial_reward_type + 
+    (1 + prev_trial_reward_type | SID), 
+  data = shooting_trimmed
+)
+summary(force_z_pupil_reward)
+
+
+pupil_state_reward <- lmer(
+  rt ~ pupil_state + 
+    (0 + reward_type | SID), 
+  data = rt_sub_data
+)
+
+summary(pupil_state_reward)
+
+pupil_state_vigor <- lmer(
+  pupil_state ~ vigor_wc +  baseline_force_abs + trial_num + block_num +
+    (1  | SID), 
+  data = shooting_trimmed
+)
+
+summary(pupil_state_vigor)
+
+# change in reach peak velocity
+pupil_pre_phasic_vigor <- lmer(
+  vigor_wc ~ pupil_pre_phasic_raw*reward_type + 
+    (1  + reward_type | SID), 
+  data = shooting_trimmed
+)
+
+summary(pupil_pre_phasic_vigor)
+
+# change in reach peak velocity
+pupil_pre_phasic_vigor_component <- lmer(
+  vigor_wc ~ pupil_state*reward_type + pre_phasic_residual*reward_type +
+    (1  + reward_type | SID), 
+  data = shooting_trimmed
+)
+
+summary(pupil_pre_phasic_vigor_component)
 # change in max pupil during phasic ramp (1.5 second window prior to GO cue)
 
 pupil_max_reward <- lmer(
-  pupil_max ~ reward_type + 
+  phasic_residual ~ reward_type + 
     (1 + reward_type | SID), 
   data = shooting_trimmed
 )
 
 summary(pupil_max_reward)
 
-# change in reach peak velocity
-vigor_reward <- lmer(
-  vigor_wc ~ reward_type*pupil_state + 
-    (1 + reward_type + pupil_state | SID), 
-  data = shooting_trimmed
-)
 
-summary(vigor_reward)
-
-
-# ==============================================================================
-# 1. PARAMETERS (Change these to customize your plot)
-# ==============================================================================
-
-# Labels for reward_type (1 = No Reward, 2 = Reward)
-label_no_reward <- "No Reward"
-label_reward    <- "Reward"
-
-# Colors for the violins
-color_no_reward <- "black" # Orange
-color_reward    <- "red" # Blue
-
-# Axis labels
-y_axis_label    <- "Peak Velocity (m/s [mean centred])"
-x_axis_label    <- "Condition"
-plot_title      <- "Effect of Reward on Vigor"
-
-# ==============================================================================
-# 2. DATA PREP & PLOTTING
-# ==============================================================================
-
-# Convert the numeric 1 and 2 into a factor for ggplot
-plot_data <- shooting_trimmed %>%
-  mutate(
-    reward_factor = factor(
-      reward_type, 
-      levels = c(1, 2), 
-      labels = c(label_no_reward, label_reward)
-    )
-  )
-
-# Create the plot
-ggplot(plot_data, aes(x = reward_factor, y = vigor_wc, fill = reward_factor)) +
-  # The violin plot itself
-  geom_violin(trim = FALSE, alpha = 0.7, color = "black") +
-  
-  # Optional: Adds a small boxplot inside for medians/quartiles
-  geom_boxplot(width = 0.15, fill = "white", color = "black", outlier.shape = NA) +
-  
-  # Apply your custom colors
-  scale_fill_manual(values = c(color_no_reward, color_reward)) +
-  
-  # Apply your custom labels
-  labs(
-    title = plot_title,
-    x = x_axis_label,
-    y = y_axis_label
-  ) +
-  geom_signif(
-    comparisons = list(c(label_no_reward, label_reward)),
-    annotations = "p < .0005", # Change to match your lmer output (e.g., "*", "**", "p = 0.02")
-    y_position = max(plot_data$vigor_wc, na.rm = TRUE) + 0.1, # Adjust the + 0.5 to move the bar up or down
-    tip_length = 0.03,
-    textsize = 2.5,
-    vjust = -0.1
-  ) +
-  
-  # Clean, minimal theme
-  theme_minimal() +
-  theme(
-    legend.position = "none", # Hides the legend since the x-axis already labels the groups
-    plot.title      = element_text(size = 16, face = "bold", hjust = 0.5),
-    axis.title      = element_text(size = 14, face = "bold"),
-    axis.text       = element_text(size = 12),
-    panel.grid.major.x = element_blank() # Removes vertical grid lines for a cleaner look
-  ) + 
-  ylim(-0.6, 0.6)
 
 # -------------------------------------------------------------------------
 # 3. BASELINE ESTIMATES & HELPER FUNCTIONS
@@ -195,7 +252,7 @@ m1_reward_asym <- nlme(
     gamma ~ 1
   ),
   random = list(SID = pdDiag(mu + sigma ~ 1)),
-  data = shooting,
+  data = shooting_trimmed,
   start = list(fixed = c(nls_coefs["mu"], -0.01, nls_coefs["sigma"], nls_coefs["asym"], 0, nls_coefs["gamma"])),
   control = ctrl
 )
@@ -211,14 +268,13 @@ m2_reward_mu_only <- nlme(
     gamma ~ 1
   ),
   random = list(SID = pdDiag(mu ~ 1)),
-  data = shooting,
+  data = shooting_trimmed,
   start = list(fixed = c(nls_coefs["mu"], -0.01, nls_coefs["sigma"], nls_coefs["asym"], nls_coefs["gamma"])),
   control = ctrl
 )
 summary(m2_reward_mu_only)
 # Compare Step A Models
 cat("\n--- Does Reward affect Asymptote? ---\n")
-anova(m1_reward_asym, m2_reward_mu_only)
 
 # Note: The following steps assume m2_reward_mu_only wins (Asym is stable). 
 # If m1 wins, simply add `asym ~ reward_type` and adjust the start vectors below.
@@ -227,84 +283,25 @@ anova(m1_reward_asym, m2_reward_mu_only)
 m3_reward_vigor <- nlme(
   success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
   fixed = list(
-    mu ~ reward_type * vigor_scaled, 
+    mu ~ reward_type * vigor_wc, 
     sigma ~ 1, 
     asym ~ 1, 
     gamma ~ 1
   ),
   random = list(SID = pdDiag(mu  ~ 1)),
-  data = shooting,
+  data = shooting_trimmed,
   # mu starts: Intercept, reward_type, vigor_scaled, reward:vigor
   start = list(fixed = c(nls_coefs["mu"], -0.01, -0.005, 0, nls_coefs["sigma"], nls_coefs["asym"], nls_coefs["gamma"])),
   control = ctrl
 )
 
 summary(m3_reward_vigor)
-cat("\n--- Does Vigor scale the Reward effect on Mu? ---\n")
-anova(m2_reward_mu_only, m3_reward_vigor)
-
-
-# --- Step C: Add Pupil State (Does arousal modulate the vigor/reward link?) ---
-m4_reward_vigor_pupil <- nlme(
-  success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
-  fixed = list(
-    mu ~ reward_type * pupil_max_scaled * vigor_scaled ,
-    sigma ~ 1, 
-    asym ~ 1, 
-    gamma ~ 1
-  ),
-  random = list(SID = pdDiag(mu ~ 1)),
-  data = shooting_trimmed,
-  # mu starts: Int, rew, vig, pup, rew:vig, rew:pup, vig:pup, rew:vig:pup
-  start = list(fixed = c(
-    nls_coefs["mu"], -0.01, -0.005, 0, 0, 0, 0, 0,
-    nls_coefs["sigma"], nls_coefs["asym"], nls_coefs["gamma"]
-  )),
-  control = ctrl
-)
-summary(m4_reward_vigor_pupil)
-cat("\n--- Does Pupil State interact with the Reward/Vigor system? ---\n")
-anova(m3_reward_vigor, m4_reward_vigor_pupil)
-library(dplyr)
-
-# Cap the extreme lever arms at +/- 2.5 SD
-shooting_trimmed <- shooting_trimmed %>%
-  mutate(
-    vigor_winsorized = ifelse(vigor_scaled > 2.5, 2.5, 
-                              ifelse(vigor_scaled < -2.5, -2.5, vigor_scaled)),
-    
-    pupil_max_winsorized = ifelse(pupil_max_scaled > 2.5, 2.5, 
-                                  ifelse(pupil_max_scaled < -2.5, -2.5, pupil_max_scaled))
-  )
-
-# 1. Run a simpler model first (no interactions)
-m_simple <- nlme(success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
-                 fixed = list(mu ~ reward_type + pupil_max + pupil_state + vigor_wc, sigma ~ 1, asym ~ 1, gamma ~ 1),
-                 random = mu ~ 1 | SID, 
-                 start = c(
-                   # mu parameters: Intercept + 4 slopes (assuming reward_type has 2 levels)
-                   "mu.(Intercept)"    = 0.2,  
-                   "mu.reward_type"    = -0.01,  
-                   "mu.pupil_max"      = 0,
-                   "mu.pupil_state"    = 0,
-                   "mu.vigor_wc"       = 0,
-                   
-                   # other parameters
-                   "sigma"             = 0.01,  # Good guess for standard deviation
-                   "asym"              = 1,  # Good guess for an upper asymptote
-                   "gamma"             = 0.25   # Good guess for a lower asymptote
-                 ),
-                 data = shooting_trimmed)
-
-# 2. Extract those coefficients to start your complex model
-my_starts <- coef(m_simple) # This gets you the intercepts
-# Then inject these into your start list for the complex model
 
 # Then run your nlme using the _winsorized variables
-m4_corrected <- nlme(
+m4_pupil_vigor <- nlme(
   success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
   fixed = list(
-    mu ~ reward_type * pupil_max * pupil_state + vigor_wc,
+    mu ~ reward_type * pupil_state + vigor_wc,
     sigma ~ 1, 
     asym ~ 1, 
     gamma ~ 1
@@ -313,201 +310,221 @@ m4_corrected <- nlme(
   data = shooting_trimmed,
   # mu starts: Int, rew, vig, pup, rew:vig, rew:pup, vig:pup, rew:vig:pup
   start = list(fixed = c(
-    nls_coefs["mu"], -0.01, -0.005, -0.006, 0.004, 0, 0, 0, 0,
+    nls_coefs["mu"], -0.01, -0.005, -0.006, 0.004,
     nls_coefs["sigma"], nls_coefs["asym"], nls_coefs["gamma"]
   )),
   control = ctrl
 )
-summary(m4_corrected)
 
-# Then run your nlme using the _winsorized variables
-m4_quadratic <- nlme(
+summary(m4_pupil_vigor)
+
+
+
+# 1. Run a stripped-down base model to grab stable starting values
+m_reward_main <- nlme(
   success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
   fixed = list(
-    # Added the quadratic term here
-    mu ~ reward_type * pupil_max_scaled * pupil_state_scaled + I(pupil_state_scaled^2) + vigor_scaled,
-    sigma ~ 1, 
+    mu ~ reward_type + pupil_state + pupil_pre_phasic,
+    sigma ~ 1,
     asym ~ 1, 
     gamma ~ 1
   ),
   random = list(SID = pdDiag(mu ~ 1)),
-  data = shooting,
+  data = shooting_trimmed,
+  # Assuming these match your standard nls_coefs
+  start = c(0.2, 0, 0, 0, 0.02, 0.95, 0.25) 
+)
+
+# Extract those stable base coefficients
+starts_reward_main <- fixef(m_reward_main) 
+
+# 2. Pad the start vector with zeros for the new interaction terms
+# We need exactly 11 starting values: 
+# 8 for mu (Intercept + 3 main effects + 3 two-way + 1 three-way) + sigma + asym + gamma
+new_starts_reward <- c(
+  starts_reward_main[1], # mu.(Intercept)
+  starts_reward_main[2], # mu.reward_type
+  starts_reward_main[3], # mu.pupil_state
+  starts_reward_main[4], # mu.pupil_pre_phasic
+  0,                     # mu.reward_type:pupil_state (Start at 0)
+  0,                     # mu.reward_type:pupil_pre_phasic (Start at 0)
+  starts_reward_main[5], # sigma.(Intercept)
+  starts_reward_main[6], # asym.(Intercept)
+  starts_reward_main[7]  # gamma.(Intercept)
+)
+
+# 3. Run the full orthogonalized model with reward_type
+m5_reward_pupil_state_pre_phasic <- nlme(
+  success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
+  fixed = list(
+    mu ~ reward_type * pupil_state + reward_type*pupil_pre_phasic,
+    sigma ~ 1, 
+    asym ~ 1, 
+    gamma ~ 1
+  ),
+  # Allow subjects to vary on baseline threshold and their sensitivity to reward
+  random = list(SID = pdDiag(mu ~ reward_type, asym ~ reward_type)),
+  data = shooting_trimmed,
+  start = new_starts_reward,
+  control = nlmeControl(opt = "nlminb", pnlsMaxIter = 1000, msMaxIter = 1000)
+)
+
+summary(m5_reward_pupil_state_pre_phasic)
+
+# now look at how vigor figures with this 
+
+# 1. Run a stripped-down base model to grab stable starting values
+m_reward_main <- nlme(
+  success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
+  fixed = list(
+    mu ~ reward_type + pupil_state + pre_phasic_residual + vigor_wc, 
+    sigma ~ 1,
+    asym ~ 1, 
+    gamma ~ 1
+  ),
+  random = list(SID = pdDiag(mu ~ 1)),
+  data = shooting_trimmed,
+  # Assuming these match your standard nls_coefs
+  start = c(0.2, 0, 0, 0,0, 0.02, 0.95, 0.25) 
+)
+
+# Extract those stable base coefficients
+starts_reward_main <- fixef(m_reward_main) 
+
+# 2. Pad the start vector with zeros for the new interaction terms
+# We need exactly 11 starting values: 
+# 8 for mu (Intercept + 3 main effects + 3 two-way + 1 three-way) + sigma + asym + gamma
+new_starts_reward <- c(
+  starts_reward_main[1], # mu.(Intercept)
+  starts_reward_main[2], # mu.reward_type
+  starts_reward_main[3], # mu.pupil_state
+  starts_reward_main[4], # mu.pupil_pre_phasic
+  starts_reward_main[5], # mu.vigor_wc
+  0,                     # mu.reward_type:pupil_state (Start at 0)
+  0,                     # mu.reward_type:pupil_pre_phasic (Start at 0)
+  0,                     # mu.vigor_wc:pupil_pre_phasic_raw (Start at 0)
+
+
+  starts_reward_main[6], # sigma.(Intercept)
+  starts_reward_main[7], # asym.(Intercept)
+  starts_reward_main[8]  # gamma.(Intercept)
+)
+
+# 3. Run the full orthogonalized model with reward_type
+m6_reward_pupil_state_pre_phasic_vigor <- nlme(
+  success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
+  fixed = list(
+    mu ~ pupil_state*reward_type + reward_type*pre_phasic_residual + vigor_wc*pupil_state,
+    sigma ~ 1, 
+    asym ~ 1, 
+    gamma ~ 1
+  ),
+  # Allow subjects to vary on baseline threshold and their sensitivity to reward
+  random = list(SID = pdDiag(mu  ~ reward_type, asym ~ 1)),
+  data = shooting_trimmed,
+  start = new_starts_reward,
+  control = nlmeControl(opt = "nlminb", pnlsMaxIter = 1000, msMaxIter = 1000)
+)
+
+summary(m6_reward_pupil_state_pre_phasic_vigor)
+
+
+m_reward_main <- nlme(
+  success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
+  fixed = list(
+    mu ~ reward_type  + phasic_residual_scaled + vigor_wc + pupil_state, 
+    sigma ~ 1,
+    asym ~ 1, 
+    gamma ~ 1
+  ),
+  random = list(SID = pdDiag(mu ~ 1)),
+  data = shooting_trimmed,
+  # Assuming these match your standard nls_coefs
+  start = c(0.2, 0, 0, 0,0, 0.02, 0.95, 0.25) 
+)
+
+new_starts_reward <- c(
+  starts_reward_main[1], # mu.(Intercept)
+  starts_reward_main[2], # mu.(Intercept)
   
-  # mu starts now requires 10 values. 
-  # Order: Int, rew, p_max, p_state, p_state^2 (NEW), vigor, rew:p_max, rew:p_state, p_max:p_state, rew:p_max:p_state
-  start = list(fixed = c(
-    nls_coefs["mu"], -0.01, -0.005, -0.006, 0, 0.004, 0, 0, 0, 0,
-    nls_coefs["sigma"], nls_coefs["asym"], nls_coefs["gamma"]
-  )),
-  control = ctrl
-)
-summary(m4_quadratic)
-anova(m4_quadratic, m4_corrected)
-
-# 1. Update the control to include a minimum bound for the parameters
-# The 'msMinPar' defines the lower bound for the parameters in the order 
-# they appear in the fixed effects: c(mu_int, mu_reward, mu_vigor, mu_vigor_effpt, sigma, asym, gamma)
-# We set the 5th parameter (sigma) to 0.005.
-strat_data = shooting[shooting$eff_pt < 0.4 ,]
-strat_check_model <- lmer(
-  peak_tanVel ~ eff_pt + (1 + eff_pt | SID), 
-  data = strat_data
+  starts_reward_main[3], # mu.pupil_state
+  starts_reward_main[4], # mu.pupil_pre_phasic
+  starts_reward_main[5], # mu.vigor_wc
+  0,                     # mu.reward_type:pupil_state (Start at 0)
+  0,
+  0,
+  0,
+  starts_reward_main[6], # sigma.(Intercept)
+  starts_reward_main[7], # asym.(Intercept)
+  starts_reward_main[8]  # gamma.(Intercept)
 )
 
-summary(strat_check_model)
-
-pupil_check_model <- lmer(
-  vigor_scaled ~ pupil_slope_scaled + (1 + pupil_slope_scaled | SID), 
-  data = strat_data
+# 3. Run the full orthogonalized model with reward_type
+m7_pupil_state_pre_phasic_vigor <- nlme(
+  success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
+  fixed = list(
+    mu ~ reward_type*phasic_residual*vigor_wc + pupil_state,
+    sigma ~ 1, 
+    asym ~ 1, 
+    gamma ~ 1
+  ),
+  # Allow subjects to vary on baseline threshold and their sensitivity to reward
+  random = list(SID = pdDiag(mu  ~ reward_type, asym ~ 1)),
+  data = shooting_trimmed,
+  start = new_starts_reward,
+  control = nlmeControl(opt = "nlminb", pnlsMaxIter = 1000, msMaxIter = 1000)
 )
-
-summary(pupil_check_model)
-plot( shooting$vigor_scaled, shooting$pupil_state_scaled)
+summary(m7_pupil_state_pre_phasic_vigor)
 
 
-# We model the Phasic burst as a function of the Tonic baseline and Reward type.
-# The interaction term is the critical test.
-autonomic_override_model <- lmer(
-  pupil_max_scaled ~ pupil_state_scaled * reward_type + 
-    (1 + pupil_state_scaled | SID), 
-  data = shooting_trimmed
-)
+anova(m1_reward_asym,m2_reward_mu_only, m3_reward_vigor, m4_pupil_vigor, m5_reward_pupil_state_pre_phasic, m6_reward_pupil_state_pre_phasic_vigor, m7_pupil_state_pre_phasic_vigor)
 
-summary(autonomic_override_model)
 
 
 library(ggplot2)
 library(dplyr)
 
-# 1. Aggregate the data to get participant means
-# This calculates one mean pupil value per participant, per condition
-participant_summary <- shooting_trimmed %>%
-  group_by(SID, reward_type) %>%
-  summarize(
-    participant_mean_pupil = mean(pupil_max_scaled, na.rm = TRUE),
-    .groups = "drop"
+# 1. Extract coefficients from your model
+beta <- fixef(m7_pupil_state_pre_phasic_vigor)
+
+# 2. Create a prediction grid across the range of your residualized variable
+# (Adjust the min/max range if your pre_phasic_residual spans a wider/narrower window)
+pred_grid <- expand.grid(
+  pre_phasic_residual = seq(
+    min(-0.005, na.rm = TRUE),
+    max(0.005, na.rm = TRUE),
+    length.out = 100
+  ),
+  reward_type = c("No Reward", "Reward")
+)
+
+# 3. Calculate predicted mu using the model's fixed effects equation
+# (Holding pupil_state at 0, which is its median/mean-centered baseline)
+pred_grid <- pred_grid %>%
+  mutate(
+    mu_pred = case_when(
+      reward_type == "No Reward" ~ beta["mu.(Intercept)"] + 
+        (beta["mu.pre_phasic_residual"] * pre_phasic_residual),
+      
+      reward_type == "Reward"    ~ (beta["mu.(Intercept)"] + beta["mu.reward_type2"]) + 
+        ((beta["mu.pre_phasic_residual"] + beta["mu.reward_type2:pre_phasic_residual"]) * pre_phasic_residual)
+    )
   )
 
-# 2. Generate the plot
-ggplot(participant_summary, aes(x = reward_type, y = participant_mean_pupil)) +
-  
-  # A. Add the jittered dots representing individual participants
-  # width controls how far they spread horizontally; alpha makes overlapping dots visible
-  geom_jitter(aes(color = reward_type), width = 0.15, size = 3, alpha = 0.6) +
-  
-  # B. Add the Crossbar for the Group Mean
-  # We use stat_summary to calculate the mean of the participant means on the fly
-  stat_summary(
-    fun = mean, 
-    geom = "crossbar", 
-    width = 0.4,           # Width of the crossbar
-    linewidth = 1,         # Thickness of the line
-    color = "black"        # Keeps the mean line distinct from the colored dots
-  ) +
-  
-  # C. Styling and Colors (matching the previous interaction plot)
-  scale_color_manual(values = c("No Reward" = "#3182bd", "High Reward" = "#de2d26")) +
-  
-  # D. Labels and Clean Formatting
+# 4. Generate the publication-ready plot
+ggplot(pred_grid, aes(x = pre_phasic_residual, y = mu_pred, color = reward_type)) +
+  geom_line(linewidth = 1.2) +
+  scale_color_manual(values = c("No Reward" = "#2b5c8f", "Reward" = "#d95f02")) +
   labs(
-    title = "Reward Consistently Elevates Phasic Arousal",
-    subtitle = "Dots represent individual participant means; black bar denotes group mean",
-    x = "Condition",
-    y = "Mean Phasic Burst (Z-scored)"
+    title = "The Reward Paradox: Cost of Cognitive Readjustment",
+    subtitle = "Top-down cognitive pre-loading improves execution normally, but causes a choking penalty under reward.",
+    x = "Top-Down Cognitive Readjustment (pre_phasic_residual)",
+    y = "Predicted Motor Cost (μ)\n[Higher Value = Worse Precision / Slower Execution]",
+    color = "Trial Context"
   ) +
-  
-  # Clean, publication-ready theme
-  theme_bw(base_size = 14) +
+  theme_classic(base_size = 14) +
   theme(
-    legend.position = "none", # Legend is redundant since x-axis is labeled
-    panel.grid.major.x = element_blank(), # Removes vertical grid lines for a cleaner look
-    plot.title = element_text(face = "bold")
+    plot.title = element_text(face = "bold", size = 16),
+    legend.position = "bottom"
   )
 
-
-library(ggplot2)
-library(dplyr)
-
-# 1. Aggregate the data to get participant standard deviations
-# This calculates one standard deviation value per participant, per condition
-participant_sd_summary <- shooting_trimmed %>%
-  group_by(SID, reward_type) %>%
-  summarize(
-    participant_sd_pupil = sd(pupil_max, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-# 2. Generate the plot
-ggplot(participant_sd_summary, aes(x = reward_type, y = participant_sd_pupil)) +
-  
-  # A. Add the jittered dots representing individual participant SDs
-  geom_jitter(aes(color = reward_type), width = 0.15, size = 3, alpha = 0.6) +
-  
-  # B. Add the Crossbar for the Group Mean of the SDs
-  stat_summary(
-    fun = mean, 
-    geom = "crossbar", 
-    width = 0.4,           
-    linewidth = 1,         
-    color = "black"        
-  ) +
-  
-  # C. Styling and Colors (maintaining consistency)
-  scale_color_manual(values = c("No Reward" = "#3182bd", "High Reward" = "#de2d26")) +
-  
-  # D. Labels tailored to variability
-  labs(
-    title = "Reward Increases Consistency of Autonomic Arousal",
-    subtitle = "Dots represent individual participant standard deviations; black bar denotes group mean",
-    x = "Condition",
-    y = "Standard Deviation of Phasic Burst (Z-scored)"
-  ) +
-  
-  # Clean, publication-ready theme
-  theme_bw(base_size = 14) +
-  theme(
-    legend.position = "none", 
-    panel.grid.major.x = element_blank(), 
-    plot.title = element_text(face = "bold")
-  )
-
-# 1. Extract marginal effects (same as before)
-model_preds <- ggpredict(autonomic_override_model, terms = c("pupil_state_scaled", "reward_type"))
-
-# 2. Build the unified plot
-ggplot() +
-  # Raw data points in the background
-  geom_point(data = shooting_trimmed, 
-             aes(x = pupil_state_scaled, y = pupil_max_scaled, color = reward_type), 
-             alpha = 0.15, size = 1) +
-  
-  # Model predictions: confidence ribbons and regression lines
-  geom_ribbon(data = model_preds, 
-              aes(x = x, ymin = conf.low, ymax = conf.high, fill = group), 
-              alpha = 0.3) +
-  geom_line(data = model_preds, 
-            aes(x = x, y = predicted, color = group), 
-            linewidth = 1.2) +
-  
-  # Aesthetics and labels
-  theme_minimal(base_size = 14) +
-  
-  # Fixed color manual
-  scale_color_manual(name = "Reward Condition",
-                     values = c("1" = "#3182bd", "2" = "#de2d26"), 
-                     labels = c("1" = "No Reward", "2" = "Reward")) +
-  
-  # Added fill manual with identical parameters to beautifully merge the legends
-  scale_fill_manual(name = "Reward Condition",
-                    values = c("1" = "#3182bd", "2" = "#de2d26"), 
-                    labels = c("1" = "No Reward", "2" = "Reward")) +
-  
-  labs(
-    title = "Tonic-Phasic Pupil Dynamics by Reward Condition",
-    x = "Baseline Pupil Size (Tonic)",
-    y = "Peak Pupil Response (Phasic)"
-  ) +
-  theme(
-    legend.position = "right",
-    legend.title = element_text(face = "bold")
-  )

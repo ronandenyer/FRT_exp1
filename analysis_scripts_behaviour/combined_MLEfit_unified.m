@@ -1,5 +1,5 @@
 %% Define Participant details
-pat = 'FRTC04'; % Update for your new participant
+pat = 'FRTC05'; % Update for your new participant
 base_dir = 'C:\Users\denyer\OneDrive - UCL\FRT_data\Combined_experiment'; % Update path as needed
 pat_dir = strcat(base_dir, '\', pat);
 data_file = strcat(pat_dir, '\', pat, '_combined_reach_data_analyzed.mat');

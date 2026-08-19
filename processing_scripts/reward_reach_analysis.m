@@ -1,5 +1,5 @@
 %% Define Participant details
-%pat = 'LEA';
+%pat = 'FRTP01';
 base_dir = 'C:\Users\denyer\OneDrive - UCL\FRT_data\Reward_experiment'; 
 pat_dir = strcat(base_dir, '\', pat);
 
@@ -72,7 +72,7 @@ for i = 2:height(reward_data)
     end
 end
 %% Save data
-reward_data = reward_data(:, [1:7, 14:17, 23:40]);
+reward_data = reward_data(:, [1:7, 14:17, 23:50]);
 
 save_filename = strcat(pat, '_reward_reach_data_analyzed.mat');
 save_path = strcat(pat_dir, '\', save_filename);

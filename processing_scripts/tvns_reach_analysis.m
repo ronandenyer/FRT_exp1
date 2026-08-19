@@ -80,7 +80,7 @@ for i = 2:height(tvns_data)
 end
 
 %% Strip out data heavy columns before saving
-tvns_data_light = tvns_data(:, [1:7, 14:17, 23:40]);
+tvns_data_light = tvns_data(:, [1:7, 14:17, 23:50]);
 %% Save data
 
 save_filename = strcat(pat, '_tvns_reach_data_analyzed.mat');

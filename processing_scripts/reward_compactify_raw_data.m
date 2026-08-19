@@ -1,4 +1,5 @@
 %% Define Participant detailspat = 'ALAN';
+%pat = "FRTP01";
 base_dir = 'C:\Users\denyer\OneDrive - UCL\FRT_data\Reward_experiment'; 
 pat_dir = strcat(base_dir, '\', pat);
 
@@ -149,7 +150,46 @@ for i = 1:num_blocks
         Compact.VelAngle{k} = rad2deg(atan2(Compact.HandYVel{k}, Compact.HandXVel{k}));
 
         Compact.VelAngle_rot{k} = rad2deg(atan2(yVelRot, xVelRot));
+        
+        % Calculate downward force applied to handle (motor readiness)
+        force_z = block_data_filtered(k).Right_FS_ForceZ;
+        Compact.force_z{k} = force_z;
+        mean_baseline_force_z = mean(Compact.force_z{k}(1000:2000));
+        Compact.force_z_normalized{k} = force_z - mean_baseline_force_z;
+        Compact.baseline_mean_force_z(k) = mean_baseline_force_z;
+        Compact.post_cue_mean_force_z(k) = mean(Compact.force_z{k}(3500:5000));
+        Compact.post_cue_mean_force_z_norm(k) = mean(Compact.force_z_normalized{k}(3500:5000));
 
+        % ---------------------------------------------------------
+        % Calculate planar micro-movements (Motor Co-contraction / Jitter)
+        force_x = block_data_filtered(k).Right_FS_ForceX;
+        force_y = block_data_filtered(k).Right_FS_ForceY;
+        
+        % Design a 5 Hz high-pass Butterworth filter (assumes 1000 Hz sample rate)
+        % (Tip: If your loop is slow, move the [b,a] definition outside/above the 'for k' loop)
+        [b, a] = butter(2, 5/(1000/2), 'high'); 
+        
+        % If your vectors have trailing NaNs, filter only the valid data
+        valid_idx = ~isnan(force_x) & ~isnan(force_y);
+        force_x_hf = nan(size(force_x));
+        force_y_hf = nan(size(force_y));
+        
+        % Apply zero-phase filtering to remove slow postural drift
+        force_x_hf(valid_idx) = filtfilt(b, a, force_x(valid_idx));
+        force_y_hf(valid_idx) = filtfilt(b, a, force_y(valid_idx));
+        
+        % Combine into a single high-frequency magnitude vector
+        force_jitter_mag = sqrt(force_x_hf.^2 + force_y_hf.^2);
+        
+        % Save the continuous trace 
+        Compact.force_jitter{k} = force_jitter_mag;
+        
+        % Extract the mean jitter (co-contraction magnitude) for your two windows
+        Compact.baseline_jitter(k) = mean(force_jitter_mag(1000:2000), 'omitnan');
+        Compact.post_cue_jitter(k) = mean(force_jitter_mag(3500:5000), 'omitnan');
+        Compact.force_jitter_normalized{k} = force_jitter_mag - Compact.baseline_jitter(k);
+        Compact.post_cue_jitter_norm(k) = mean(Compact.force_jitter_normalized{k}(3500:5000), 'omitnan');
+        
         % Pupil analysis
         fs = 1000; %sample rate
         pre_window = 4000; % time in ms before prep sound 1 to use as window
@@ -165,7 +205,7 @@ for i = 1:num_blocks
         nan_percentage = sum(isnan(eye_raw))/length(eye_raw);
         
         Compact.pupil_nan_percent(k) = nan_percentage;
-
+        
         try
             % smooth pupil data
             % smooth_window = 200;
@@ -201,16 +241,13 @@ for i = 1:num_blocks
             
             pupil_window = Compact.pupil_size_normalized{k}(phasic_indices);
             
-            % Compute local derivatives scaled by sampling rate (units/second)
-            pupil_gradient = gradient(pupil_window) * fs;
-            
-            % Robust Peak Dilation Velocity: Mean of the top 5% fastest slopes
-            sorted_gradients = sort(pupil_gradient, 'descend');
-            num_points_5pct = round(0.05 * length(sorted_gradients));
             
             Compact.pupil_size_phasic_slope{k} = (pupil_window(end) - pupil_window(1))/length(pupil_window);
             [Compact.pupil_size_max{k}, Compact.pupil_size_max_ind{k}] = max(pupil_window);
             % --------------------------------------
+            
+            
+
 
             % Reject trials with physically impossible (negative) pupil sizes
             if any(Compact.pupil_size{k} < 0)
@@ -224,6 +261,11 @@ for i = 1:num_blocks
                 Compact.pupil_size_phasic_slope{k} = NaN;
                 Compact.pupil_size_max{k} = NaN;
                 Compact.pupil_size_max_ind{k} = NaN;
+                % Compact.force_z{k} = NaN;
+                % Compact.force_z_normalized{k} = NaN;
+                % Compact.baseline_mean_force_z(k) = NaN;
+                % Compact.post_cue_mean_force_z(k) = NaN;
+                % Compact.post_cue_mean_force_z_norm(k) = NaN;
                 
             end
         catch
@@ -237,6 +279,11 @@ for i = 1:num_blocks
             Compact.pupil_size_phasic_slope{k} = NaN;
             Compact.pupil_size_max{k} = NaN;
             Compact.pupil_size_max_ind{k} = NaN;
+            % Compact.force_z{k} = NaN;
+            % Compact.force_z_normalized{k} = NaN;
+            % Compact.baseline_mean_force_z(k) = NaN;
+            % Compact.post_cue_mean_force_z(k) = NaN;
+            % Compact.post_cue_mean_force_z_norm(k) = NaN;
         end
         
     end

@@ -1,5 +1,5 @@
 %% Define Participant details
-pat = 'RONAN';
+pat = 'FRTP33';
 base_dir = 'C:\Users\denyer\OneDrive - UCL\FRT_data\reward_experiment'; 
 pat_dir = strcat(base_dir, '\', pat);
 

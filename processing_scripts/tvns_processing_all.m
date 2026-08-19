@@ -9,7 +9,7 @@ base_dir = 'C:\Users\denyer\OneDrive - UCL\FRT_data\tvns_experiment';
 for a = 1:length(pats)
     pat = pats{a};
     disp(pat);
-    % filtration_loop_tvns;
-    %tvns_compactify_raw_data;
+    %filtration_loop_tvns;
+    tvns_compactify_raw_data;
     tvns_reach_analysis;
 end

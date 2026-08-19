@@ -69,7 +69,7 @@ shooting_combined <- shooting_combined %>%
 
 
 # Trimmed dataset (Generated but held in reserve, models use 'shooting')
-shooting_trimmed <- shooting_combined %>%
+shooting_combined_trimmed <- shooting_combined %>%
   filter(
     abs(pupil_state_scaled) <= 3,
     abs(pupil_pre_phasic_scaled) <= 3,
@@ -78,10 +78,28 @@ shooting_trimmed <- shooting_combined %>%
     abs(vigor_scaled) <= 3
   )
 
+library(dplyr)
+library(tidyr)
 
-pupil_state_lmer = lmer(pupil_size_phasic_slope ~ condition + 
-                          (1| SID),
-                        data = shooting_combined)
+# 1. Extract the Mean and SD of the baseline pupil for every participant on both days
+# (Assuming you have a combined dataframe with a column like 'experiment_day')
+pupil_metrics <- shooting_combined_trimmed %>%
+  group_by(SID, experiment_source) %>%
+  summarize(
+    subject_mean = mean(pupil_size_mean, na.rm = TRUE),
+    subject_sd = sd(pupil_size_mean, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# 2. Test the Mean Difference (Does the center shift up?)
+t.test(subject_mean ~ experiment_source, data = pupil_metrics, paired = TRUE)
+
+# 3. Test the Variability Difference (Does the variance shrink?)
+t.test(subject_sd ~ experiment_source, data = pupil_metrics, paired = TRUE)
+
+pupil_state_lmer = lmer(pupil_slope ~ pupil_state*experiment_source + 
+                          (1 + pupil_state + experiment_source| SID),
+                        data = shooting_combined_trimmed)
 
 summary(pupil_state_lmer)
 
@@ -92,8 +110,8 @@ rt_lmer = lmer(rt ~ condition +
 
 summary(rt_lmer)
 
-pupil_state_prev_trial = lmer(pupil_size_mean ~ condition*prev_trial_success + 
-                          (1| SID),
+pupil_state_prev_trial = lmer(pupil_size_pre_phasic_mean ~ experiment_source*prev_trial_success + 
+                          (1 + experiment_source+prev_trial_success| SID),
                         data = shooting_combined)
 
 summary(pupil_state_prev_trial)
@@ -117,12 +135,12 @@ shooting_combined$condition <- as.factor(shooting_combined$condition)
 # Using a random intercept for SID since estimating 4 random slopes 
 # for 28 participants might crash the optimizer
 global_baseline_model <- lmer(
-  pupil_size_pre_phasic_mean_norm ~ condition + (1 | SID), 
+  pupil_size_mean ~ experiment_source + (1 | SID), 
   data = shooting_combined
 )
 
 # 4. Check the overall main effect of condition
-anova(global_baseline_model)
+summary(global_baseline_model)
 
 # 5. The Critical Step: Pairwise Contrasts
 # This calculates the exact baseline for all 4 conditions and compares them
@@ -275,7 +293,7 @@ new_starts_unified <- c(
   starts_main[6],          # pupil_state
   starts_main[5], 
   -0.3,# pupil_pre_phasic
-  0, 0, 0,                 # New interaction terms (condition x pupil_pre_phasic) set to 0 initially
+  0,                # New interaction terms (condition x pupil_pre_phasic) set to 0 initially
   starts_main[7:9]         # sigma, asym, gamma
 )
 
@@ -283,7 +301,7 @@ new_starts_unified <- c(
 nlme_unified_interaction <- nlme(
   success ~ (gamma + (asym - gamma) * safe_pnorm(eff_pt, mu, sigma)),
   fixed = list(
-    mu ~ condition * pupil_state + pupil_pre_phasic + vigor_wc,
+    mu ~ condition * pupil_state,
     sigma ~ 1, 
     asym ~ 1, 
     gamma ~ 1
